@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { makeTar, tarDirectory, tarOwnerFlags } from "../src/sandbox/tar.js";
+import { makeTar, tarDirectory, tarOwnerFlags, tarSanitizeFlags } from "../src/sandbox/tar.js";
 
 function listWithHostTar(archive: Buffer): string {
   const dir = mkdtempSync(join(tmpdir(), "iaso-tar-"));
@@ -62,6 +62,13 @@ describe("tarOwnerFlags", () => {
       "--group=1000",
       "--numeric-owner",
     ]);
+  });
+});
+
+describe("tarSanitizeFlags", () => {
+  it("strips xattrs, and macOS metadata for bsdtar", () => {
+    expect(tarSanitizeFlags("bsdtar 3.5.3")).toEqual(["--no-xattrs", "--no-mac-metadata"]);
+    expect(tarSanitizeFlags("tar (GNU tar) 1.35")).toEqual(["--no-xattrs"]);
   });
 });
 

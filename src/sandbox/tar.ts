@@ -62,6 +62,14 @@ export function tarOwnerFlags(versionOutput: string, uid: number, gid: number): 
     : [`--owner=${String(uid)}`, `--group=${String(gid)}`, "--numeric-owner"];
 }
 
+/**
+ * Drop extended attributes. macOS tags files with `com.apple.provenance`, and the Docker daemon
+ * fails the whole extraction ("lsetxattr ... operation not supported") when it meets one.
+ */
+export function tarSanitizeFlags(versionOutput: string): string[] {
+  return versionOutput.includes("bsdtar") ? ["--no-xattrs", "--no-mac-metadata"] : ["--no-xattrs"];
+}
+
 export interface HostTar {
   stream: Readable;
   /** Resolves when tar exits 0; rejects with tar's stderr otherwise. */
@@ -76,7 +84,16 @@ export function tarDirectory(dir: string, uid: number, gid: number): HostTar {
   const version = execFileSync("tar", ["--version"], { encoding: "utf8" });
   const child: ChildProcess = spawn(
     "tar",
-    [...tarOwnerFlags(version, uid, gid), "--exclude=node_modules", "-cf", "-", "-C", dir, "."],
+    [
+      ...tarOwnerFlags(version, uid, gid),
+      ...tarSanitizeFlags(version),
+      "--exclude=node_modules",
+      "-cf",
+      "-",
+      "-C",
+      dir,
+      ".",
+    ],
     // COPYFILE_DISABLE stops macOS tar from adding AppleDouble "._" files.
     { env: { ...process.env, COPYFILE_DISABLE: "1" }, stdio: ["ignore", "pipe", "pipe"] },
   );

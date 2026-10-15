@@ -87,6 +87,7 @@ export class DockerSandbox implements Sandbox {
         runId: this.opts.runId,
       });
       await this.api.startContainer(this.containerId);
+      await this.ensureRepoDir();
       if (this.opts.repoPath !== undefined) await this.copyRepoIn(this.opts.repoPath);
       await this.recordBaseline();
     } catch (err) {
@@ -176,17 +177,23 @@ export class DockerSandbox implements Sandbox {
     return this.containerId;
   }
 
-  private async copyRepoIn(repoPath: string): Promise<void> {
+  /** Make sure /repo exists and belongs to the sandbox user (plain images do not have it). */
+  private async ensureRepoDir(): Promise<void> {
     const id = this.requireId();
-    // Create /repo owned by the sandbox user. The daemon extracts archives as root, so this works
-    // even though the container user has no capabilities.
+    const probe = await this.api.exec(id, ["test", "-d", REPO_DIR], "/");
+    if (probe.exitCode === 0) return;
+    // The daemon extracts archives as root, so this works even though the container user has no
+    // capabilities (a plain `mkdir /repo` as uid 1000 would be denied).
     await this.api.putTar(
       id,
       makeTar([{ name: `${REPO_DIR.slice(1)}/`, mode: 0o755, uid: UID, gid: GID }]),
       "/",
     );
+  }
+
+  private async copyRepoIn(repoPath: string): Promise<void> {
     const { stream, done } = tarDirectory(repoPath, UID, GID);
-    await this.api.putTar(id, stream, REPO_DIR);
+    await this.api.putTar(this.requireId(), stream, REPO_DIR);
     await done;
   }
 
@@ -201,7 +208,11 @@ export class DockerSandbox implements Sandbox {
       `git tag -f ${BASELINE_TAG} >/dev/null`,
     ].join("\n");
     const res = await this.api.exec(this.requireId(), ["bash", "-c", script], REPO_DIR);
-    if (res.exitCode !== 0) throw new Error(`Cannot record baseline: ${res.stderr.trim()}`);
+    if (res.exitCode !== 0) {
+      throw new Error(
+        `Cannot record baseline (exit ${String(res.exitCode)}): ${res.stderr.trim() || res.stdout.trim()}`,
+      );
+    }
   }
 }
 

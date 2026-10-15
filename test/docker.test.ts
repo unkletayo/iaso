@@ -62,7 +62,22 @@ describe("DockerSandbox.start", () => {
     expect(calls[0]).toBe("ensureImage node:22-bookworm");
     expect(calls[1]).toBe("create iaso-r1");
     expect(calls[2]).toBe("start cid");
-    expect(calls[3]).toMatch(/^exec bash -c .*git tag -f iaso-baseline/s);
+    expect(calls[3]).toBe("exec test -d /repo");
+    expect(calls[4]).toMatch(/^exec bash -c .*git tag -f iaso-baseline/s);
+  });
+
+  it("creates /repo as the sandbox user when the image does not have it", async () => {
+    const { api, putTars } = fakeApi({
+      exec: (argv) => (argv[0] === "test" ? { exitCode: 1, stdout: "", stderr: "" } : ok()),
+    });
+    await sandbox(api).start();
+    expect(putTars.map((p) => p.dest)).toEqual(["/"]);
+  });
+
+  it("leaves an existing /repo alone", async () => {
+    const { api, putTars } = fakeApi();
+    await sandbox(api).start();
+    expect(putTars).toEqual([]);
   });
 
   it("copies the host repo into /repo before the baseline", async () => {
@@ -70,8 +85,8 @@ describe("DockerSandbox.start", () => {
     writeFileSync(join(dir, "a.txt"), "A");
     const { api, calls, putTars } = fakeApi();
     await sandbox(api, { repoPath: dir }).start();
-    expect(putTars.map((p) => p.dest)).toEqual(["/", "/repo"]);
-    expect(putTars[1]?.bytes).toBeGreaterThan(0);
+    expect(putTars.map((p) => p.dest)).toEqual(["/repo"]);
+    expect(putTars[0]?.bytes).toBeGreaterThan(0);
     const putIdx = calls.indexOf("putTar /repo");
     const baselineIdx = calls.findIndex((c) => c.includes("iaso-baseline"));
     expect(putIdx).toBeGreaterThan(-1);
@@ -80,7 +95,7 @@ describe("DockerSandbox.start", () => {
 
   it("removes the container and rethrows when start fails partway", async () => {
     const { api, calls } = fakeApi({ exec: () => ({ exitCode: 1, stdout: "", stderr: "no git" }) });
-    await expect(sandbox(api).start()).rejects.toThrow(/Cannot record baseline: no git/);
+    await expect(sandbox(api).start()).rejects.toThrow(/Cannot record baseline \(exit 1\): no git/);
     expect(calls).toContain("remove cid");
   });
 
