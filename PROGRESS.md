@@ -32,7 +32,10 @@ Status: `[x]` done, `[~]` in progress, `[ ]` todo. Update this file at the end o
   - [~] 2D live round-trip test written (`test/live/roundtrip.live.test.ts`, `vitest.config.ts`); skips cleanly without key. NOT yet run against the real API: needs `ANTHROPIC_API_KEY`. Run: `IASO_LIVE=1 npx vitest run test/live`
   - [ ] M2 done only after the live run passes
   - [ ] Verify `models.json` prices on official vendor pages (web lookup found only third-party sources, see below)
-- [ ] M3 Sandbox
+- [~] M3 Sandbox (Docker only; Podman and local mode are M9). Docker daemon was NOT running at last check; needed for 3C.
+  - [x] 3A `sandbox/types.ts`, `images.ts`, `cleanup.ts` + tests (66 tests pass)
+  - [ ] 3B `sandbox/docker.ts` (dockerode, fake-client tests), `npm i dockerode @types/dockerode`
+  - [ ] 3C opt-in integration tests (`IASO_DOCKER=1`): command runs inside, limits, network cut, container gone after crash
 - [ ] M4 Tools + loop + context mgmt part 1
 - [ ] M5 Phases + plan mode + context mgmt part 2
 - [ ] M6 Sources
