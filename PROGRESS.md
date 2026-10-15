@@ -23,7 +23,15 @@ Status: `[x]` done, `[~]` in progress, `[ ]` todo. Update this file at the end o
 
 ## Later milestones
 
-- [ ] M2 Providers
+- [~] M2 Providers (live round trip: Anthropic only; user is getting a key)
+  - [x] 2A neutral types, mock provider, retry (31 tests pass)
+  - [x] 2B Anthropic adapter + SDKs installed (`@anthropic-ai/sdk` 0.134.0, `openai` 7.34.0); 39 tests pass
+  - Decision: Anthropic adapter never sends `temperature` (SDK deprecates it; non-1.0 values 400 on newer models). M13 best-of-N must vary models, not temperature, for Anthropic.
+  - Decision: `Usage.inputTokens` = whole prompt incl. cached; `cachedInputTokens` = cached part. Cost = (input - cached) * in + cached * cachedPrice.
+  - [x] 2C OpenAI-compatible adapter + registry (55 tests pass). OpenAI temperature not sent (reasoning models reject it); `max_completion_tokens` for OpenAI, `max_tokens` for other servers; tool errors prefixed `[error]`.
+  - [~] 2D live round-trip test written (`test/live/roundtrip.live.test.ts`, `vitest.config.ts`); skips cleanly without key. NOT yet run against the real API: needs `ANTHROPIC_API_KEY`. Run: `IASO_LIVE=1 npx vitest run test/live`
+  - [ ] M2 done only after the live run passes
+  - [ ] Verify `models.json` prices on official vendor pages (web lookup found only third-party sources, see below)
 - [ ] M3 Sandbox
 - [ ] M4 Tools + loop + context mgmt part 1
 - [ ] M5 Phases + plan mode + context mgmt part 2
