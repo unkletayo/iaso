@@ -1,0 +1,124 @@
+import type { ChatRequest, Message, ToolDef } from "../providers/types.js";
+import { MAX_READ_LINES } from "../tools/read-file.js";
+import { applyStaleness } from "./staleness.js";
+import type { TaskState } from "./state.js";
+
+/** Spec §7A point 2: the working set shows at most this many lines per file. */
+export const WORKING_SET_MAX_LINES = 200;
+/** Spec §7A point 2: last N steps in full. */
+export const DEFAULT_RECENT_STEPS = 8;
+
+export interface WorkingFile {
+  path: string;
+  /** The latest content of a file the agent edited. */
+  content: string;
+}
+
+export interface LayerInput {
+  /** Pinned: stable system prompt. */
+  system: string;
+  /** Pinned: the issue text. */
+  issue: string;
+  /** Pinned: the approved plan, once plan mode exists (M6). */
+  plan?: string;
+  state: TaskState;
+  workingSet: readonly WorkingFile[];
+  /** Compacted history summary (M5). */
+  compactedSummary?: string;
+  /** Every message since the issue: assistant tool calls and user tool results, in order. */
+  history: readonly Message[];
+  /** Keep this many recent steps in full. Omit to keep all (until compaction exists, M5). */
+  recentSteps?: number;
+  tools: ToolDef[];
+  maxOutputTokens: number;
+}
+
+export interface BuiltRequest {
+  request: ChatRequest;
+  /** Steps left out because they are older than `recentSteps`. */
+  omittedSteps: number;
+  /** True when staleness marking rewrote a file read. */
+  staleChanged: boolean;
+}
+
+const list = (items: string[]): string =>
+  items.length === 0 ? "(none)" : items.map((i) => `- ${i}`).join("\n");
+
+/** Plain text, fixed order, so the same state always renders the same bytes. */
+export function renderTaskState(s: TaskState): string {
+  return [
+    "## Your notes (task state)",
+    `phase: ${s.phase}`,
+    `root cause hypothesis: ${s.rootCauseHypothesis === "" ? "(none yet)" : s.rootCauseHypothesis}`,
+    `confirmed facts:\n${list(s.confirmedFacts)}`,
+    `files examined:\n${list(s.filesExamined.map((f) => `${f.path}: ${f.why}`))}`,
+    `failed approaches:\n${list(s.failedApproaches.map((f) => `${f.what} (failed because: ${f.whyItFailed})`))}`,
+    `tests run:\n${list(s.testsRun.map((t) => `[${t.result}] ${t.cmd} (step ${String(t.step)})`))}`,
+    `todo:\n${list(s.todo)}`,
+  ].join("\n");
+}
+
+function renderFile(file: WorkingFile): string {
+  const lines = file.content.split("\n");
+  if (file.content.endsWith("\n")) lines.pop();
+  const shown = lines.slice(0, WORKING_SET_MAX_LINES);
+  const width = String(shown.length).length;
+  const body = shown.map((l, i) => `${String(i + 1).padStart(width)}\t${l}`).join("\n");
+  const more = lines.length - shown.length;
+  const footer =
+    more > 0
+      ? `\n[${String(more)} more lines. Use read_file with startLine=${String(WORKING_SET_MAX_LINES + 1)}; reads return at most ${String(MAX_READ_LINES)} lines.]`
+      : "";
+  return `### ${file.path} (latest version, ${String(lines.length)} lines)\n${body}${footer}`;
+}
+
+export function renderWorkingSet(files: readonly WorkingFile[]): string {
+  if (files.length === 0) return "";
+  return `## Files you edited (latest versions)\n\n${files.map(renderFile).join("\n\n")}`;
+}
+
+/** Keep the last `n` steps. A step starts at an assistant message and includes its results. */
+function lastSteps(history: readonly Message[], n: number): { kept: Message[]; omitted: number } {
+  const starts = history.flatMap((m, i) => (m.role === "assistant" ? [i] : []));
+  if (n >= starts.length) return { kept: [...history], omitted: 0 };
+  const cut = starts[starts.length - Math.max(n, 0)] ?? history.length;
+  return { kept: history.slice(cut), omitted: starts.length - Math.max(n, 0) };
+}
+
+/**
+ * Spec §7A point 2: rebuild the request from layers, stable first:
+ * pinned (system, issue, plan), task state, working set, compacted summary, recent history.
+ * The first user message carries the first four; history follows as real messages.
+ */
+export function buildRequest(input: LayerInput): BuiltRequest {
+  const stale = applyStaleness(input.history);
+  const { kept, omitted } =
+    input.recentSteps === undefined
+      ? { kept: stale.messages, omitted: 0 }
+      : lastSteps(stale.messages, input.recentSteps);
+
+  const parts = [`## Issue\n\n${input.issue}`];
+  if (input.plan !== undefined) parts.push(`## Approved plan\n\n${input.plan}`);
+  parts.push(renderTaskState(input.state));
+  const workingSet = renderWorkingSet(input.workingSet);
+  if (workingSet !== "") parts.push(workingSet);
+  if (input.compactedSummary !== undefined) {
+    parts.push(`## Summary of earlier steps\n\n${input.compactedSummary}`);
+  } else if (omitted > 0) {
+    parts.push(
+      `[${String(omitted)} earlier steps are not shown. Your notes above keep what mattered.]`,
+    );
+  }
+
+  const context: Message = { role: "user", content: [{ type: "text", text: parts.join("\n\n") }] };
+  return {
+    request: {
+      system: input.system,
+      messages: [context, ...kept],
+      tools: input.tools,
+      maxOutputTokens: input.maxOutputTokens,
+    },
+    omittedSteps: omitted,
+    staleChanged: stale.changed,
+  };
+}
