@@ -41,7 +41,14 @@ Status: `[x]` done, `[~]` in progress, `[ ]` todo. Update this file at the end o
   - Known gap: the very first run got an unexplained HTTP 500 from `ensureImage` on `node:22-bookworm`. Not reproduced; the pull path works for `alpine:3.20` (13.7s). Likely transient.
   - Known gap: an uncaught exception outside try/finally, or SIGKILL, can still leak a container. Label `iaso.run` allows later cleanup (no `iaso clean` command yet).
   - [x] M3 done for Docker. Podman + unsafe local mode are M9.
-- [ ] M4 Tools + loop + context mgmt part 1
+- [ ] M4 Tools + loop + context mgmt part 1 (plan drafted, awaiting approval; spec §5, §7, §7A pts 1-5, §12)
+  - [x] 4A tool foundations: `tools/schema.ts` (defineTool/toToolDef/parseToolInput/runTool), `tools/paths.ts`, `tools/truncate.ts`, 2 test files (116 tests pass). Decisions: gating = per phase; CLI wiring deferred; live proof run by user.
+  - [ ] 4B `bash`, `read_file`, `edit_file` tools + tests (fake Sandbox)
+  - [ ] 4C `context/state.ts` (TaskState), `submit`, `notes` tools + tests
+  - [ ] 4D `telemetry/cost.ts`, `telemetry/trajectory.ts`, `agent/budget.ts` + tests
+  - [ ] 4E `context/budget.ts` (token accounting), `shaping.ts`, `staleness.ts` + tests
+  - [ ] 4F `context/layers.ts`, `agent/prompts.ts`, `agent/loop.ts` + tests (mock provider)
+  - [ ] 4G fixture repo `test/fixtures/`, Docker e2e with scripted mock, live Haiku fix (user runs; costs cents)
 - [ ] M5 Phases + plan mode + context mgmt part 2
 - [ ] M6 Sources
 - [ ] M7 Benchmark
