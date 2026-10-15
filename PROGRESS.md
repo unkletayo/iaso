@@ -29,12 +29,13 @@ Status: `[x]` done, `[~]` in progress, `[ ]` todo. Update this file at the end o
   - Decision: Anthropic adapter never sends `temperature` (SDK deprecates it; non-1.0 values 400 on newer models). M13 best-of-N must vary models, not temperature, for Anthropic.
   - Decision: `Usage.inputTokens` = whole prompt incl. cached; `cachedInputTokens` = cached part. Cost = (input - cached) * in + cached * cachedPrice.
   - [x] 2C OpenAI-compatible adapter + registry (55 tests pass). OpenAI temperature not sent (reasoning models reject it); `max_completion_tokens` for OpenAI, `max_tokens` for other servers; tool errors prefixed `[error]`.
-  - [~] 2D live round-trip test written (`test/live/roundtrip.live.test.ts`, `vitest.config.ts`); skips cleanly without key. NOT yet run against the real API: needs `ANTHROPIC_API_KEY`. Run: `IASO_LIVE=1 npx vitest run test/live`
-  - [ ] M2 done only after the live run passes
+  - [x] 2D live round-trip test (`test/live/roundtrip.live.test.ts`, `vitest.config.ts`). Passed against `anthropic:claude-haiku-5-5` (4.2s), run by the user in their own terminal (output pasted by user; the key is not in the agent's shell). Run: `IASO_LIVE=1 npx vitest run test/live`
+  - [x] M2 done for Anthropic. OpenAI-compatible adapters remain fake-client tested only.
   - [ ] Verify `models.json` prices on official vendor pages (web lookup found only third-party sources, see below)
 - [~] M3 Sandbox (Docker only; Podman and local mode are M9). Docker daemon was NOT running at last check; needed for 3C.
   - [x] 3A `sandbox/types.ts`, `images.ts`, `cleanup.ts` + tests (66 tests pass)
-  - [ ] 3B `sandbox/docker.ts` (dockerode, fake-client tests), `npm i dockerode @types/dockerode`
+  - [x] 3B `sandbox/docker.ts`, `sandbox/tar.ts` (hand-rolled ustar writer + host `tar` streaming), dockerode 5.0.1 + @types/dockerode 4.0.2 (major mismatch; types compile, verify in 3C). 93 tests pass. Real Docker path (`dockerodeApi`) untested until 3C.
+  - Decisions: CapDrop ALL + no-new-privileges, no swap, HOME=/tmp, `node_modules` not copied, baseline = git commit tagged `iaso-baseline`, `diff()` = `git add -A && git diff --cached --binary iaso-baseline`.
   - [ ] 3C opt-in integration tests (`IASO_DOCKER=1`): command runs inside, limits, network cut, container gone after crash
 - [ ] M4 Tools + loop + context mgmt part 1
 - [ ] M5 Phases + plan mode + context mgmt part 2
