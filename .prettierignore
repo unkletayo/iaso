@@ -1,0 +1,5 @@
+dist
+node_modules
+runs
+iaso-build-prompt.md
+package-lock.json
