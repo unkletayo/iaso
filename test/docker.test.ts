@@ -195,6 +195,31 @@ describe("DockerSandbox files and diff", () => {
     await expect(sb.readFile("/repo/nope")).rejects.toThrow(/No such file/);
   });
 
+  it("refuses to read a file over 4 MiB instead of returning truncated content", async () => {
+    const { api } = fakeApi({
+      exec: (argv) => {
+        if (argv[0] === "stat" && argv[3] === "--" && argv[4] === "/repo/big.bin") {
+          return ok(`${String(4 * 1024 * 1024 + 1)}\n`);
+        }
+        if (argv[0] === "stat") return ok("10\n");
+        return ok("content");
+      },
+    });
+    const sb = sandbox(api);
+    await sb.start();
+    await expect(sb.readFile("/repo/big.bin")).rejects.toThrow(/over the 4194304 byte limit/);
+    expect(await sb.readFile("/repo/small.txt")).toBe("content");
+  });
+
+  it("reads a file of exactly 4 MiB", async () => {
+    const { api } = fakeApi({
+      exec: (argv) => (argv[0] === "stat" ? ok(`${String(4 * 1024 * 1024)}\n`) : ok("data")),
+    });
+    const sb = sandbox(api);
+    await sb.start();
+    expect(await sb.readFile("/repo/edge.bin")).toBe("data");
+  });
+
   it("writes a file via mkdir + tar into its directory", async () => {
     const { api, putTars, calls } = fakeApi({
       exec: (argv) => (argv[0] === "stat" ? { exitCode: 1, stdout: "", stderr: "" } : ok()),

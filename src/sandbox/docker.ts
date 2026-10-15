@@ -19,6 +19,8 @@ const GID = 1000;
 const DEFAULT_TIMEOUT_SEC = 120;
 /** Cap per stream so a runaway command cannot exhaust host memory. Tools trim further. */
 const MAX_CAPTURE_BYTES = 5 * 1024 * 1024;
+/** Must stay below the capture cap so `readFile` can never return truncated content. */
+const MAX_READ_BYTES = 4 * 1024 * 1024;
 const BASELINE_TAG = "iaso-baseline";
 
 export interface ContainerSpec {
@@ -114,7 +116,17 @@ export class DockerSandbox implements Sandbox {
   }
 
   async readFile(path: string): Promise<string> {
-    const res = await this.api.exec(this.requireId(), ["cat", "--", path], REPO_DIR);
+    const id = this.requireId();
+    // Output capture is capped, so a larger file would come back silently truncated. A caller that
+    // edits and writes it back would then destroy the rest. Refuse instead.
+    const stat = await this.api.exec(id, ["stat", "-c", "%s", "--", path], REPO_DIR);
+    const size = Number.parseInt(stat.stdout.trim(), 10);
+    if (stat.exitCode === 0 && size > MAX_READ_BYTES) {
+      throw new Error(
+        `Cannot read ${path}: file is ${String(size)} bytes, over the ${String(MAX_READ_BYTES)} byte limit.`,
+      );
+    }
+    const res = await this.api.exec(id, ["cat", "--", path], REPO_DIR);
     if (res.exitCode !== 0) {
       throw new Error(
         `Cannot read ${path}: ${res.stderr.trim() || `exit ${String(res.exitCode)}`}`,
