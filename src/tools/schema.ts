@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { RunState } from "../context/state.js";
 import type { ToolDef } from "../providers/types.js";
 import type { Sandbox } from "../sandbox/types.js";
 import { truncateOutput } from "./truncate.js";
@@ -13,6 +14,8 @@ export interface ToolContext {
   sandbox: Sandbox;
   /** 1-based loop step that triggered the call. */
   step: number;
+  /** Per-run state shared by `notes` and `submit`. The loop provides it; file tools ignore it. */
+  run?: RunState;
 }
 
 export interface ToolDefinition<S extends z.ZodType = z.ZodType> {
