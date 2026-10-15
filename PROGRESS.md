@@ -43,7 +43,7 @@ Status: `[x]` done, `[~]` in progress, `[ ]` todo. Update this file at the end o
   - [x] M3 done for Docker. Podman + unsafe local mode are M9.
 - [ ] M4 Tools + loop + context mgmt part 1 (plan drafted, awaiting approval; spec §5, §7, §7A pts 1-5, §12)
   - [x] 4A tool foundations: `tools/schema.ts` (defineTool/toToolDef/parseToolInput/runTool), `tools/paths.ts`, `tools/truncate.ts`, 2 test files (116 tests pass). Decisions: gating = per phase; CLI wiring deferred; live proof run by user.
-  - [ ] 4B `bash`, `read_file`, `edit_file` tools + tests (fake Sandbox)
+  - [x] 4B `bash`, `read_file`, `edit_file` + tests with in-memory fake Sandbox (154 tests pass). Decisions: non-zero exit is NOT a tool error (only timeout is); `edit_file` counts overlapping matches as separate (ambiguous); empty oldText only creates new files; `$` in newText stays literal. Also fixed in 3B: `readFile` refuses files > 4 MiB (capture cap is 5 MB, would have truncated silently).
   - [ ] 4C `context/state.ts` (TaskState), `submit`, `notes` tools + tests
   - [ ] 4D `telemetry/cost.ts`, `telemetry/trajectory.ts`, `agent/budget.ts` + tests
   - [ ] 4E `context/budget.ts` (token accounting), `shaping.ts`, `staleness.ts` + tests
