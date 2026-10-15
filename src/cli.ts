@@ -1,0 +1,60 @@
+#!/usr/bin/env node
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { Command } from "commander";
+import { registerModels } from "./commands/models.js";
+
+export const VERSION = "0.0.1";
+
+export class NotImplementedError extends Error {
+  constructor(command: string, milestone: string) {
+    super(`"iaso ${command}" is not implemented yet (planned for ${milestone}).`);
+    this.name = "NotImplementedError";
+  }
+}
+
+function registerStub(program: Command, name: string, description: string, milestone: string) {
+  program
+    .command(name)
+    .description(description)
+    .action(() => {
+      throw new NotImplementedError(name, milestone);
+    });
+}
+
+export function buildProgram(): Command {
+  const program = new Command()
+    .name("iaso")
+    .description("Iaso: a minimal coding agent that heals broken code.")
+    .version(VERSION);
+
+  registerStub(program, "run", "Fix a bug from an issue and a repository", "M4");
+  registerStub(program, "plan", "Run only the planning phase and print the plan", "M5");
+  registerStub(program, "bench", "Run a benchmark sample", "M7");
+  registerModels(program);
+  return program;
+}
+
+export async function main(argv: readonly string[]): Promise<number> {
+  try {
+    await buildProgram().parseAsync([...argv]);
+    return 0;
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+}
+
+function isDirectRun(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun()) {
+  process.exitCode = await main(process.argv);
+}
