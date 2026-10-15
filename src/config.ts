@@ -25,11 +25,17 @@ export const IasoConfigSchema = z.strictObject({
 
 export type IasoConfig = z.infer<typeof IasoConfigSchema>;
 
-export const BUDGET_DEFAULTS = {
+export interface BudgetLimits {
+  maxSteps: number;
+  maxCostUsd: number;
+  maxTimeMinutes: number;
+}
+
+export const BUDGET_DEFAULTS: BudgetLimits = {
   maxSteps: 50,
   maxCostUsd: 1.0,
   maxTimeMinutes: 20,
-} as const;
+};
 
 export class ConfigError extends Error {
   constructor(
