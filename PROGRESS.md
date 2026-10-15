@@ -36,7 +36,11 @@ Status: `[x]` done, `[~]` in progress, `[ ]` todo. Update this file at the end o
   - [x] 3A `sandbox/types.ts`, `images.ts`, `cleanup.ts` + tests (66 tests pass)
   - [x] 3B `sandbox/docker.ts`, `sandbox/tar.ts` (hand-rolled ustar writer + host `tar` streaming), dockerode 5.0.1 + @types/dockerode 4.0.2 (major mismatch; types compile, verify in 3C). 93 tests pass. Real Docker path (`dockerodeApi`) untested until 3C.
   - Decisions: CapDrop ALL + no-new-privileges, no swap, HOME=/tmp, `node_modules` not copied, baseline = git commit tagged `iaso-baseline`, `diff()` = `git add -A && git diff --cached --binary iaso-baseline`.
-  - [ ] 3C opt-in integration tests (`IASO_DOCKER=1`): command runs inside, limits, network cut, container gone after crash
+  - [x] 3C opt-in integration tests (`IASO_DOCKER=1 npx vitest run test/integration`): 9/9 pass on real Docker 29.4.3 (Docker Desktop, macOS). Covers: command runs as uid 1000 in /repo, limits + hardening via `docker inspect`, repo copy / node_modules skipped / diff / mode preserved, network cut (no eth0, connect fails) and restored, timeout kill, destroy, container gone after crash (try/finally), SIGTERM (exit 143) and SIGINT (exit 130). No containers leaked.
+  - Bugs found by the real run (all fixed): `/repo` missing in plain images; macOS `com.apple.provenance` xattrs in tar made the daemon fail (`--no-xattrs --no-mac-metadata`); baseline errors lacked the exit code.
+  - Known gap: the very first run got an unexplained HTTP 500 from `ensureImage` on `node:22-bookworm`. Not reproduced; the pull path works for `alpine:3.20` (13.7s). Likely transient.
+  - Known gap: an uncaught exception outside try/finally, or SIGKILL, can still leak a container. Label `iaso.run` allows later cleanup (no `iaso clean` command yet).
+  - [x] M3 done for Docker. Podman + unsafe local mode are M9.
 - [ ] M4 Tools + loop + context mgmt part 1
 - [ ] M5 Phases + plan mode + context mgmt part 2
 - [ ] M6 Sources

@@ -29,4 +29,14 @@ npm test
 npm run build
 ```
 
+Two test groups are off by default because they need outside resources:
+
+```sh
+# Real Docker (needs a running daemon; the first run pulls a ~1 GB image)
+IASO_DOCKER=1 npx vitest run test/integration
+
+# Real model API (costs a few cents; needs ANTHROPIC_API_KEY in your environment)
+IASO_LIVE=1 npx vitest run test/live
+```
+
 Progress and the build plan are tracked in `PROGRESS.md`.
