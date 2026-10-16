@@ -4,7 +4,7 @@ Iaso (Ἰασώ) is the Greek goddess of recovery and healing; this agent brings
 
 Iaso is a command-line coding agent. It takes a bug report and a repository, reproduces the bug with a failing test, applies a minimal fix, runs the tests, and outputs a patch. A human reviews the patch and opens the PR. Iaso never pushes code.
 
-> Status: early development (M1, skeleton). Only `iaso models` works today.
+> Status: early development (M5). `iaso models`, `iaso plan` and `iaso run` work; `bench` is not built yet.
 
 ## Try it
 

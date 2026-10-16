@@ -36,8 +36,8 @@ describe("cli", () => {
 
   it("exits 1 with a clear message for stub commands", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(await main(["node", "iaso", "run"])).toBe(1);
-    expect(String(err.mock.calls[0]?.[0])).toMatch(/not implemented yet \(planned for M4\)/);
+    expect(await main(["node", "iaso", "bench"])).toBe(1);
+    expect(String(err.mock.calls[0]?.[0])).toMatch(/not implemented yet \(planned for M7\)/);
     err.mockRestore();
   });
 });

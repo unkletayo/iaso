@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { registerModels } from "./commands/models.js";
+import { registerRun } from "./commands/run.js";
 
 export const VERSION = "0.0.1";
 
@@ -28,8 +29,7 @@ export function buildProgram(): Command {
     .description("Iaso: a minimal coding agent that heals broken code.")
     .version(VERSION);
 
-  registerStub(program, "run", "Fix a bug from an issue and a repository", "M4");
-  registerStub(program, "plan", "Run only the planning phase and print the plan", "M5");
+  registerRun(program);
   registerStub(program, "bench", "Run a benchmark sample", "M7");
   registerModels(program);
   return program;
