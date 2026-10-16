@@ -3,7 +3,7 @@ import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  { ignores: ["dist", "node_modules", "runs", "viewer", "eslint.config.js"] },
+  { ignores: ["dist", "node_modules", "runs", "viewer", "eslint.config.js", "test/fixtures"] },
   eslint.configs.recommended,
   tseslint.configs.strictTypeChecked,
   {
