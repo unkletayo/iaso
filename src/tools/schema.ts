@@ -60,20 +60,31 @@ export function parseToolInput<S extends z.ZodType>(
   return { ok: false, error: `${hint}${z.prettifyError(result.error)}` };
 }
 
+export interface RunToolOptions {
+  /** Cut long output to the standard limit. The loop turns this off so it can store the raw text. */
+  truncate?: boolean;
+}
+
 /**
  * Validate input, run the tool, and turn every failure into an error result the model can read.
- * Output is truncated here so no tool can flood the context.
+ * Output is truncated here by default so no tool can flood the context.
  */
-export async function runTool(tool: Tool, raw: unknown, ctx: ToolContext): Promise<ToolResult> {
+export async function runTool(
+  tool: Tool,
+  raw: unknown,
+  ctx: ToolContext,
+  { truncate = true }: RunToolOptions = {},
+): Promise<ToolResult> {
+  const cut = (text: string): string => (truncate ? truncateOutput(text) : text);
   const parsed = parseToolInput(tool.definition, raw);
   if (!parsed.ok) {
     return { output: `Invalid input for ${tool.definition.name}:\n${parsed.error}`, isError: true };
   }
   try {
     const result = await tool.run(parsed.value, ctx);
-    return { output: truncateOutput(result.output), isError: result.isError };
+    return { output: cut(result.output), isError: result.isError };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { output: truncateOutput(`${tool.definition.name} failed: ${message}`), isError: true };
+    return { output: cut(`${tool.definition.name} failed: ${message}`), isError: true };
   }
 }

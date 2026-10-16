@@ -28,7 +28,7 @@ export interface LayerInput {
   /** Every message since the issue: assistant tool calls and user tool results, in order. */
   history: readonly Message[];
   /** Keep this many recent steps in full. Omit to keep all (until compaction exists, M5). */
-  recentSteps?: number;
+  recentSteps?: number | undefined;
   tools: ToolDef[];
   maxOutputTokens: number;
 }
