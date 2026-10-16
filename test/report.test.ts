@@ -23,6 +23,7 @@ const base: PipelineResult = {
   fix: {
     status: "submitted",
     steps: 7,
+    compactions: 0,
     costUsd: 0.0134,
     usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
     submission: { summary: "Fixed the loop.", testsAdded: ["t.js"], confidence: "high", step: 7 },

@@ -6,6 +6,7 @@ import { Budget } from "../src/agent/budget.js";
 import { type LoopOptions, runLoop } from "../src/agent/loop.js";
 import { NOTES_NUDGE, NO_TOOL_NUDGE, PROMPT_VERSION } from "../src/agent/prompts.js";
 import { BUDGET_DEFAULTS } from "../src/config.js";
+import { computeCost } from "../src/telemetry/cost.js";
 import type { ChatRequest, ChatResponse, ContentBlock } from "../src/providers/types.js";
 import { MockProvider, type ScriptedStep, mockText, mockToolCall } from "../src/providers/mock.js";
 import { fakeSandbox } from "./helpers/fake-sandbox.js";
@@ -417,5 +418,118 @@ describe("runLoop: loop detection", () => {
     const s = setup([step(1), step(2), step(3), submitCall()]);
     await s.run();
     expect(nudgeTexts(s.provider)).toHaveLength(1);
+  });
+});
+
+describe("runLoop: compaction", () => {
+  const compactorPrices = { inputPrice: 1, outputPrice: 5, cachedInputPrice: 0.1 };
+  const summary = {
+    learned: ["range stops one short"],
+    files: [{ path: "src/range.js", why: "the bug" }],
+    tests: [],
+    failedApproaches: [{ what: "swap args", whyItFailed: "wrong side" }],
+  };
+  const withTokens = (step: ScriptedStep, inputTokens: number): ScriptedStep => ({
+    ...(step as ChatResponse),
+    usage: { inputTokens, outputTokens: 5, cachedInputTokens: 0 },
+  });
+  /** Cheap steps, except steps `5 .. bigUntil - 1`, which report a context of `big` tokens. */
+  const growing = (big: number, count: number, bigUntil = 6): ScriptedStep[] =>
+    Array.from({ length: count }, (_, i) =>
+      withTokens(
+        bashCall(`c${String(i)}`, `echo ${String(i)}`),
+        i >= 5 && i < bigUntil ? big : 100,
+      ),
+    );
+  const compactor = (script: ScriptedStep[]) => ({
+    provider: new MockProvider(script),
+    prices: compactorPrices,
+  });
+
+  it("folds old steps into a summary at 50% of the window and logs it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "iaso-compact-"));
+    try {
+      const c = compactor([mockToolCall("k", "record_summary", summary)]);
+      const s = setup([...growing(1200, 7), submitCall()], {
+        contextWindow: 2000,
+        compaction: c,
+        trajectory: new TrajectoryWriter(join(dir, "t.jsonl")),
+      });
+      const res = await s.run();
+      expect(res.status).toBe("submitted");
+      expect(res.compactions).toBe(1);
+      expect(c.provider.requests).toHaveLength(1);
+
+      const after = s.provider.requests[6];
+      expect(contextText(after)).toContain("## Summary of earlier steps");
+      expect(contextText(after)).toContain("range stops one short");
+      expect(after?.messages.length).toBeLessThan(s.provider.requests[5]?.messages.length ?? 0);
+      expect(res.state.confirmedFacts).toEqual([expect.stringContaining("range stops one short")]);
+
+      const steps = await readTrajectory(join(dir, "t.jsonl"));
+      const events = steps.flatMap((x) => x.contextEvents ?? []);
+      expect(events).toHaveLength(1);
+      expect(events[0]?.kind).toBe("compact");
+      expect(events[0]?.firstStep).toBeGreaterThan(1);
+      expect(events[0]?.summary).toContain("range stops one short");
+      expect(steps[6]?.contextEvents).toHaveLength(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("adds the compactor's cost to the result and the budget check", async () => {
+    const c = compactor([mockToolCall("k", "record_summary", summary)]);
+    const script = [...growing(1200, 7), submitCall()];
+    const s = setup(script, { contextWindow: 2000, compaction: c });
+    const res = await s.run();
+    const main = script.reduce(
+      (sum, step) => sum + computeCost((step as ChatResponse).usage, prices),
+      0,
+    );
+    const compacting = computeCost(
+      { inputTokens: 10, outputTokens: 5, cachedInputTokens: 0 },
+      compactorPrices,
+    );
+    expect(res.costUsd).toBeCloseTo(main + compacting, 10);
+    expect(res.usage.inputTokens).toBe(
+      script.reduce((n, step) => n + (step as ChatResponse).usage.inputTokens, 0) + 10,
+    );
+  });
+
+  it("carries on when the compactor fails, and does not retry at once", async () => {
+    const c = compactor([mockText("no"), mockText("no")]);
+    const s = setup([...growing(1200, 9, 9), submitCall()], { contextWindow: 2000, compaction: c });
+    const res = await s.run();
+    expect(res.status).toBe("submitted");
+    expect(res.compactions).toBe(0);
+    expect(c.provider.requests).toHaveLength(2);
+  });
+
+  it("drops the summary, then old steps, at 85% of the window", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "iaso-hard-"));
+    try {
+      const s = setup([...growing(1800, 9, 9), submitCall()], {
+        contextWindow: 2000,
+        trajectory: new TrajectoryWriter(join(dir, "t.jsonl")),
+      });
+      const res = await s.run();
+      expect(res.status).toBe("submitted");
+      const events = (await readTrajectory(join(dir, "t.jsonl"))).flatMap(
+        (x) => x.contextEvents ?? [],
+      );
+      expect(events.some((e) => e.kind === "trim_history")).toBe(true);
+      const last = s.provider.requests.at(-1);
+      expect(last?.messages.length).toBeLessThanOrEqual(1 + 4 * 2 + 1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does nothing without a context window", async () => {
+    const s = setup([...growing(10_000, 7, 7), submitCall()]);
+    const res = await s.run();
+    expect(res.compactions).toBe(0);
+    expect(s.provider.requests.at(-1)?.messages).toHaveLength(1 + 7 * 2);
   });
 });

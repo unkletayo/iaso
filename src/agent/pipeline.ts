@@ -33,6 +33,8 @@ export type PipelineStatus = RunStatus | "plan_failed" | "plan_rejected";
 export interface PhaseSetup {
   provider: ModelProvider;
   prices: ModelPrices;
+  /** Tokens. Without it the context thresholds are off. */
+  contextWindow?: number;
 }
 
 export interface PipelineOptions {
@@ -40,6 +42,8 @@ export interface PipelineOptions {
   fix: PhaseSetup;
   /** Model for the plan phase. Defaults to `fix`. */
   plan?: PhaseSetup;
+  /** Model that writes summaries when the context grows. Defaults to `fix`. */
+  compact?: PhaseSetup;
   sandbox: Sandbox;
   issue: string;
   limits: BudgetLimits;
@@ -173,6 +177,8 @@ export async function runPipeline(o: PipelineOptions): Promise<PipelineResult> {
   const fix = await runLoop({
     provider: o.fix.provider,
     prices: o.fix.prices,
+    ...(o.fix.contextWindow === undefined ? {} : { contextWindow: o.fix.contextWindow }),
+    compaction: { provider: (o.compact ?? o.fix).provider, prices: (o.compact ?? o.fix).prices },
     sandbox: o.sandbox,
     tools: [
       bashTool,

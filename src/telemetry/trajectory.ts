@@ -6,6 +6,28 @@ import { truncateOutput } from "../tools/truncate.js";
 /** Tool results are trimmed in the log; the raw output is not kept. */
 export const LOGGED_RESULT_CHARS = 2000;
 
+/**
+ * Something the loop did to the context before this step's request (spec §7A point 6). Replay
+ * needs these to rebuild what the model saw.
+ */
+export const ContextEventSchema = z.strictObject({
+  kind: z.enum(["compact", "compact_failed", "drop_summary", "trim_history"]),
+  /** Context size that triggered it. */
+  tokensBefore: z.number().int().nonnegative(),
+  /** Steps removed from the history (folded into the summary for `compact`). */
+  droppedSteps: z.number().int().nonnegative(),
+  /** Absolute number of the oldest step still in the history afterwards. */
+  firstStep: z.number().int().min(1),
+  /** The new rendered summary (`compact` only). */
+  summary: z.string().optional(),
+  /** Why it failed (`compact_failed` only). */
+  error: z.string().optional(),
+  /** Compactor model cost; 0 for events that make no model call. */
+  costUsd: z.number().nonnegative(),
+});
+
+export type ContextEvent = z.infer<typeof ContextEventSchema>;
+
 /** Spec §12: one line per loop step. */
 export const TrajectoryStepSchema = z.strictObject({
   step: z.number().int().min(1),
@@ -27,6 +49,8 @@ export const TrajectoryStepSchema = z.strictObject({
   ),
   costUsd: z.number().nonnegative(),
   durationMs: z.number().nonnegative(),
+  /** Compaction and trimming done just before this step's request. */
+  contextEvents: z.array(ContextEventSchema).optional(),
 });
 
 export type TrajectoryStep = z.infer<typeof TrajectoryStepSchema>;

@@ -13,7 +13,7 @@ import {
 import { renderPlan } from "../agent/plan.js";
 import { writeReport } from "../agent/report.js";
 import { BUDGET_DEFAULTS, type BudgetLimits, loadConfig } from "../config.js";
-import { findModel, loadCatalogue } from "../models.js";
+import { type Catalogue, findModel, loadCatalogue } from "../models.js";
 import type { ModelProvider } from "../providers/types.js";
 import { createProvider } from "../providers/registry.js";
 import { DockerSandbox } from "../sandbox/docker.js";
@@ -26,6 +26,7 @@ export interface RunCommandOptions {
   issue: string;
   model: string;
   planModel?: string;
+  compactModel?: string;
   approvePlan?: boolean;
   /** False with `--no-plan`. */
   plan: boolean;
@@ -88,7 +89,17 @@ export const newRunId = (now: Date = new Date()): string =>
   `${now.toISOString().replace(/[-:]/g, "").slice(0, 15)}-${randomBytes(2).toString("hex")}`;
 
 function setupFor(id: string, deps: CommandDeps): PhaseSetup {
-  return { provider: deps.createProvider(id), prices: findModel(loadCatalogue(), id) };
+  const entry = findModel(loadCatalogue(), id);
+  return { provider: deps.createProvider(id), prices: entry, contextWindow: entry.contextWindow };
+}
+
+/** The cheapest tool-calling model of the same provider, by input plus output price. */
+export function defaultCompactModel(catalogue: Catalogue, modelId: string): string {
+  const main = findModel(catalogue, modelId);
+  const cheapest = catalogue.models
+    .filter((m) => m.provider === main.provider && m.toolCalls)
+    .sort((a, b) => a.inputPrice + a.outputPrice - (b.inputPrice + b.outputPrice))[0];
+  return cheapest?.id ?? main.id;
 }
 
 /** `iaso run` and `iaso plan`. Spec §8. */
@@ -107,6 +118,8 @@ export async function executeCommand(
     maxCostUsd: opts.maxCost,
     maxTimeMinutes: opts.maxTime,
   };
+  const compactId = opts.compactModel ?? defaultCompactModel(loadCatalogue(), opts.model);
+  const compact = compactId === opts.model ? fix : setupFor(compactId, deps);
   const runId = newRunId();
   const runDir = join(resolve(opts.runs), runId);
   const started = Date.now();
@@ -139,6 +152,7 @@ export async function executeCommand(
     const result = await runPipeline({
       fix,
       plan,
+      compact,
       sandbox,
       issue,
       limits,
@@ -202,6 +216,10 @@ function addCommonOptions(cmd: Command): Command {
 
 export function registerRun(program: Command, deps: () => CommandDeps = defaultDeps): void {
   addCommonOptions(program.command("run").description("Fix a bug from an issue and a repository"))
+    .option(
+      "--compact-model <id>",
+      "model that summarises old steps (default: cheapest of the main model's provider)",
+    )
     .option("--approve-plan", "show the plan and wait for y, n, or feedback")
     .option("--no-plan", "skip the plan phase")
     .action(async (opts: RunCommandOptions) => {

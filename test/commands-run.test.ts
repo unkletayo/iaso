@@ -6,12 +6,14 @@ import { buildProgram } from "../src/cli.js";
 import {
   type CommandDeps,
   type RunCommandOptions,
+  defaultCompactModel,
   executeCommand,
   newRunId,
   parseReview,
   registerRun,
 } from "../src/commands/run.js";
 import { Command } from "commander";
+import { loadCatalogue } from "../src/models.js";
 import { MockProvider, mockToolCall } from "../src/providers/mock.js";
 import { fakeSandbox } from "./helpers/fake-sandbox.js";
 
@@ -138,6 +140,39 @@ describe("executeCommand", () => {
   });
 });
 
+describe("compact model", () => {
+  it("defaults to the cheapest tool-calling model of the same provider", () => {
+    const catalogue = loadCatalogue();
+    expect(defaultCompactModel(catalogue, "anthropic:claude-sonnet-5-5")).toBe(
+      "anthropic:claude-haiku-5-5",
+    );
+    expect(defaultCompactModel(catalogue, "ollama:qwen2.5-coder:32b")).toBe(
+      "ollama:qwen2.5-coder:32b",
+    );
+  });
+
+  it("run creates the provider for the compact model, and reuses the main one when equal", async () => {
+    const make = async (model: string, compactModel?: string) => {
+      const { opts } = await workspace();
+      const provider = new MockProvider([submit]);
+      const d = deps(provider).deps;
+      const ids: string[] = [];
+      d.createProvider = (id) => (ids.push(id), provider);
+      await executeCommand(
+        "run",
+        { ...opts, model, plan: false, ...(compactModel ? { compactModel } : {}) },
+        d,
+      );
+      return ids;
+    };
+    const sonnet = "anthropic:claude-sonnet-5-5";
+    const haiku = "anthropic:claude-haiku-5-5";
+    expect(await make(sonnet)).toEqual([sonnet, haiku]);
+    expect(await make(haiku)).toEqual([haiku]);
+    expect(await make(sonnet, sonnet)).toEqual([sonnet]);
+  });
+});
+
 describe("cli options", () => {
   it("registers run and plan with the planned flags", () => {
     const program = buildProgram();
@@ -149,6 +184,7 @@ describe("cli options", () => {
         "--issue",
         "--model",
         "--plan-model",
+        "--compact-model",
         "--max-steps",
         "--max-cost",
         "--max-time",

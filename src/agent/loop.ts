@@ -1,5 +1,11 @@
-import { ContextMeter } from "../context/budget.js";
-import { type WorkingFile, buildRequest } from "../context/layers.js";
+import {
+  ContextMeter,
+  type Thresholds,
+  estimateRequestTokens,
+  thresholdsFor,
+} from "../context/budget.js";
+import { compactSteps, splitSteps } from "../context/compaction.js";
+import { DEFAULT_RECENT_STEPS, type WorkingFile, buildRequest } from "../context/layers.js";
 import { LoopDetector, type Repeat } from "../context/loops.js";
 import { classifyCommand, shapeOutput } from "../context/shaping.js";
 import {
@@ -18,7 +24,7 @@ import type {
 } from "../providers/types.js";
 import type { Sandbox } from "../sandbox/types.js";
 import { CostTracker, type ModelPrices } from "../telemetry/cost.js";
-import type { TrajectoryStep, TrajectoryWriter } from "../telemetry/trajectory.js";
+import type { ContextEvent, TrajectoryStep, TrajectoryWriter } from "../telemetry/trajectory.js";
 import { resolveRepoPath } from "../tools/paths.js";
 import type { OutputStore } from "../tools/read-output.js";
 import { type Tool, runTool, toToolDef } from "../tools/schema.js";
@@ -46,8 +52,12 @@ export interface LoopOptions {
   plan?: string;
   budget: Budget;
   maxOutputTokens?: number;
-  /** Keep this many recent steps in full. Leave unset until compaction exists (M5). */
+  /** Keep this many recent steps in full. Without it, and without compaction, all are kept. */
   recentSteps?: number | undefined;
+  /** The model's context window in tokens. Enables the 50% / 25% / 85% thresholds. */
+  contextWindow?: number;
+  /** The model that writes summaries. Without it nothing is compacted, only trimmed at 85%. */
+  compaction?: { provider: ModelProvider; prices: ModelPrices };
   trajectory?: TrajectoryWriter;
   /** Where full copies of shortened outputs go. Without it nothing is saved. */
   outputs?: OutputStore;
@@ -60,6 +70,8 @@ export interface LoopResult {
   steps: number;
   costUsd: number;
   usage: Usage;
+  /** Successful compactions. Their cost is part of `costUsd`. */
+  compactions: number;
   submission?: Submission;
   /** Set when the plan phase ended with `submit_plan`. */
   plan?: Plan;
@@ -100,7 +112,24 @@ interface Loop {
   detector: LoopDetector;
   /** Repeat warnings sent so far. One more repeat after MAX_LOOP_NUDGES ends the run. */
   loopNudges: number;
+  thresholds: Thresholds | undefined;
+  /** Rolling summary of the steps already dropped from `history`. */
+  summary: string | undefined;
+  /** Absolute number of the first step in `history`. */
+  firstStep: number;
+  compactions: number;
+  /** Compactor spend, tracked apart from the main model because the prices differ. */
+  compactCost: CostTracker | undefined;
+  /** Do not try to compact again before this step (set after a failure). */
+  compactAfterStep: number;
+  /** Logged with the next step. */
+  pendingEvents: ContextEvent[];
 }
+
+/** After a failed compaction, wait this many steps before paying for another try. */
+const COMPACT_RETRY_AFTER_STEPS = 5;
+/** Spec §7A point 6: at the hard limit, keep only this many recent steps. */
+const HARD_LIMIT_RECENT_STEPS = 4;
 
 const toolCallsOf = (content: ContentBlock[]): ToolCall[] =>
   content.flatMap((b) =>
@@ -230,6 +259,7 @@ async function logStep(
     done: ExecutedCall[];
   },
 ): Promise<void> {
+  const contextEvents = l.pendingEvents.splice(0);
   if (!l.opts.trajectory) return;
   const { response, calls, done } = fields;
   const entry: TrajectoryStep = {
@@ -253,28 +283,161 @@ async function logStep(
     })),
     costUsd: fields.costUsd,
     durationMs: fields.durationMs,
+    ...(contextEvents.length > 0 ? { contextEvents } : {}),
   };
   await l.opts.trajectory.append(entry);
 }
 
 type StepOutcome = { done: false } | { done: true; status: RunStatus; message?: string };
 
-/** One model call plus its tool calls. */
-async function runStep(l: Loop, step: number): Promise<StepOutcome> {
+const totalCost = (l: Loop): number => l.cost.costUsd + (l.compactCost?.costUsd ?? 0);
+
+function build(l: Loop): ReturnType<typeof buildRequest> {
   const { opts } = l;
   const built = buildRequest({
     system: opts.systemPrompt,
     issue: opts.issue,
     ...(opts.plan === undefined ? {} : { plan: opts.plan }),
+    ...(l.summary === undefined ? {} : { compactedSummary: l.summary }),
     state: l.run.task,
     workingSet: [...l.workingSet].map(([path, content]): WorkingFile => ({ path, content })),
     history: l.history,
     recentSteps: opts.recentSteps,
+    firstStep: l.firstStep,
     tools: opts.tools.map((t) => toToolDef(t.definition)),
     maxOutputTokens: opts.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
   });
   if (built.staleChanged) l.meter.reset();
-  const contextTokens = l.meter.size(built.request);
+  return built;
+}
+
+/** Remove the oldest steps from the history without a summary. Returns how many went. */
+function dropOldSteps(l: Loop, keep: number): number {
+  const { recent, oldSteps } = splitSteps(l.history, keep);
+  l.history = recent;
+  l.firstStep += oldSteps;
+  l.meter.reset();
+  return oldSteps;
+}
+
+/**
+ * Pick how many recent steps to keep so the context lands at or under the target. The summary's
+ * size is not known yet, so this only looks at what stays.
+ */
+function stepsToKeep(l: Loop, target: number): number {
+  const most = l.opts.recentSteps ?? DEFAULT_RECENT_STEPS;
+  for (let keep = most; keep > 1; keep -= 1) {
+    const { recent } = splitSteps(l.history, keep);
+    const trial = buildRequest({
+      system: l.opts.systemPrompt,
+      issue: l.opts.issue,
+      ...(l.opts.plan === undefined ? {} : { plan: l.opts.plan }),
+      state: l.run.task,
+      workingSet: [...l.workingSet].map(([path, content]): WorkingFile => ({ path, content })),
+      history: recent,
+      tools: l.opts.tools.map((t) => toToolDef(t.definition)),
+      maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    });
+    if (estimateRequestTokens(trial.request) <= target) return keep;
+  }
+  return 1;
+}
+
+/** Fold old steps into the rolling summary. A failure is logged and does not stop the run. */
+async function compact(l: Loop, step: number, tokensBefore: number, target: number): Promise<void> {
+  const { compaction } = l.opts;
+  if (!compaction) return;
+  const { old, recent, oldSteps } = splitSteps(l.history, stepsToKeep(l, target));
+  if (oldSteps === 0) return;
+  try {
+    const result = await compactSteps({
+      provider: compaction.provider,
+      prices: compaction.prices,
+      old,
+      firstStep: l.firstStep,
+      previousSummary: l.summary,
+      state: l.run.task,
+    });
+    const costUsd = (l.compactCost ??= new CostTracker(compaction.prices)).add(result.usage);
+    l.history = recent;
+    l.firstStep += oldSteps;
+    l.summary = result.summary;
+    l.run.task = result.state;
+    l.compactions += 1;
+    l.meter.reset();
+    l.pendingEvents.push({
+      kind: "compact",
+      tokensBefore,
+      droppedSteps: oldSteps,
+      firstStep: l.firstStep,
+      summary: result.summary,
+      costUsd,
+    });
+  } catch (err) {
+    l.compactAfterStep = step + COMPACT_RETRY_AFTER_STEPS;
+    l.pendingEvents.push({
+      kind: "compact_failed",
+      tokensBefore,
+      droppedSteps: 0,
+      firstStep: l.firstStep,
+      error: err instanceof Error ? err.message : String(err),
+      costUsd: 0,
+    });
+  }
+}
+
+/**
+ * Spec §7A point 6: compact at 50% of the window (down to 25%). At 85% drop the summary, then all
+ * but the last few steps. Returns the request to send.
+ */
+async function prepare(
+  l: Loop,
+  step: number,
+): Promise<{ built: ReturnType<typeof build>; size: number }> {
+  let built = build(l);
+  let size = l.meter.size(built.request);
+  const t = l.thresholds;
+  if (!t) return { built, size };
+
+  if (size >= t.compactAt && step >= l.compactAfterStep) {
+    await compact(l, step, size, t.compactTarget);
+    built = build(l);
+    size = l.meter.size(built.request);
+  }
+  if (size >= t.hardLimit && l.summary !== undefined) {
+    l.pendingEvents.push({
+      kind: "drop_summary",
+      tokensBefore: size,
+      droppedSteps: 0,
+      firstStep: l.firstStep,
+      costUsd: 0,
+    });
+    l.summary = undefined;
+    l.meter.reset();
+    built = build(l);
+    size = l.meter.size(built.request);
+  }
+  if (size >= t.hardLimit) {
+    const dropped = dropOldSteps(l, HARD_LIMIT_RECENT_STEPS);
+    if (dropped > 0) {
+      l.pendingEvents.push({
+        kind: "trim_history",
+        tokensBefore: size,
+        droppedSteps: dropped,
+        firstStep: l.firstStep,
+        costUsd: 0,
+      });
+      built = build(l);
+      size = l.meter.size(built.request);
+    }
+  }
+  return { built, size };
+}
+
+/** One model call plus its tool calls. */
+async function runStep(l: Loop, step: number): Promise<StepOutcome> {
+  const { opts } = l;
+  const { built, size: contextTokens } = await prepare(l, step);
   const phase = l.run.task.phase;
   const started = performance.now();
 
@@ -335,6 +498,12 @@ async function runStep(l: Loop, step: number): Promise<StepOutcome> {
   return { done: false };
 }
 
+const addUsage = (a: Usage, b: Usage | undefined): Usage => ({
+  inputTokens: a.inputTokens + (b?.inputTokens ?? 0),
+  outputTokens: a.outputTokens + (b?.outputTokens ?? 0),
+  cachedInputTokens: a.cachedInputTokens + (b?.cachedInputTokens ?? 0),
+});
+
 async function finalDiff(sandbox: Sandbox): Promise<string> {
   try {
     return await sandbox.diff();
@@ -352,7 +521,7 @@ interface Ending {
 async function drive(l: Loop): Promise<Ending> {
   try {
     for (let step = 1; ; step += 1) {
-      const check = l.opts.budget.check({ steps: step - 1, costUsd: l.cost.costUsd });
+      const check = l.opts.budget.check({ steps: step - 1, costUsd: totalCost(l) });
       if (!check.ok) return { status: "budget_exceeded", message: check.message };
       const outcome = await runStep(l, step);
       if (outcome.done) return outcome;
@@ -379,6 +548,13 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
     lastNotesNudgeStep: 0,
     detector: new LoopDetector(),
     loopNudges: 0,
+    thresholds: opts.contextWindow === undefined ? undefined : thresholdsFor(opts.contextWindow),
+    summary: undefined,
+    firstStep: 1,
+    compactions: 0,
+    compactCost: undefined,
+    compactAfterStep: 0,
+    pendingEvents: [],
   };
   const { status, message } = await drive(l);
 
@@ -386,8 +562,9 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
     status,
     ...(message === undefined ? {} : { message }),
     steps: l.steps,
-    costUsd: l.cost.costUsd,
-    usage: l.cost.usage,
+    costUsd: totalCost(l),
+    usage: addUsage(l.cost.usage, l.compactCost?.usage),
+    compactions: l.compactions,
     ...(l.run.submission ? { submission: l.run.submission } : {}),
     ...(l.run.plan ? { plan: l.run.plan } : {}),
     state: l.run.task,
