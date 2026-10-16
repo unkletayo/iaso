@@ -8,7 +8,7 @@ import { NOTES_NUDGE, NO_TOOL_NUDGE, PROMPT_VERSION } from "../src/agent/prompts
 import { BUDGET_DEFAULTS } from "../src/config.js";
 import type { ChatRequest, ChatResponse, ContentBlock } from "../src/providers/types.js";
 import { MockProvider, type ScriptedStep, mockText, mockToolCall } from "../src/providers/mock.js";
-import type { ExecOptions, ExecResult, Sandbox } from "../src/sandbox/types.js";
+import { fakeSandbox } from "./helpers/fake-sandbox.js";
 import { readTrajectory, TrajectoryWriter } from "../src/telemetry/trajectory.js";
 import { bashTool } from "../src/tools/bash.js";
 import { editFileTool } from "../src/tools/edit-file.js";
@@ -16,33 +16,6 @@ import { notesTool } from "../src/tools/notes.js";
 import { readFileTool } from "../src/tools/read-file.js";
 import { FileOutputStore, makeReadOutputTool } from "../src/tools/read-output.js";
 import { submitTool } from "../src/tools/submit.js";
-
-function fakeSandbox(
-  files: Record<string, string> = {},
-  onExec?: (cmd: string, o?: ExecOptions) => ExecResult,
-) {
-  const store = new Map(Object.entries(files));
-  // Kept as a separate variable so tests can assert on it without reading a method off `sandbox`.
-  const exec = vi.fn((cmd: string, o?: ExecOptions) =>
-    Promise.resolve(onExec?.(cmd, o) ?? { exitCode: 0, stdout: "", stderr: "", timedOut: false }),
-  );
-  const sandbox: Sandbox = {
-    start: () => Promise.resolve(),
-    exec,
-    readFile: (p) => {
-      const c = store.get(p);
-      return c === undefined ? Promise.reject(new Error(`ENOENT ${p}`)) : Promise.resolve(c);
-    },
-    writeFile: (p, c) => {
-      store.set(p, c);
-      return Promise.resolve();
-    },
-    diff: () => Promise.resolve("DIFF"),
-    setNetwork: () => Promise.resolve(),
-    destroy: () => Promise.resolve(),
-  };
-  return { sandbox, exec, files: store };
-}
 
 const prices = { inputPrice: 3, outputPrice: 15, cachedInputPrice: 0.3 };
 const submitCall = (id = "s") =>

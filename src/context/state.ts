@@ -46,6 +46,17 @@ export function emptyTaskState(): TaskState {
   };
 }
 
+/** Spec §8 phase 1: what the planner hands over. */
+export const planSchema = z.strictObject({
+  rootCauseHypothesis: z.string().min(1),
+  filesToChange: z.array(z.strictObject({ path: z.string().min(1), change: z.string().min(1) })),
+  testPlan: z.string().min(1),
+  risks: z.array(z.string().min(1)),
+  steps: z.array(z.string().min(1)).min(1),
+});
+
+export type Plan = z.infer<typeof planSchema>;
+
 /** What `submit` records. The loop (4F) sees it and ends the run. */
 export interface Submission {
   summary: string;
@@ -60,6 +71,8 @@ export interface RunState {
   /** Step of the last accepted `notes` call; 0 if none yet. Drives the 8-step nudge. */
   lastNotesStep: number;
   submission?: Submission;
+  /** Set by `submit_plan` in the plan phase. The loop ends the run when it appears. */
+  plan?: Plan;
 }
 
 export function newRunState(): RunState {

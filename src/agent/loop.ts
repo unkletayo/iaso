@@ -1,7 +1,13 @@
 import { ContextMeter } from "../context/budget.js";
 import { type WorkingFile, buildRequest } from "../context/layers.js";
 import { classifyCommand, shapeOutput } from "../context/shaping.js";
-import { type RunState, type Submission, type TaskState, newRunState } from "../context/state.js";
+import {
+  type Plan,
+  type RunState,
+  type Submission,
+  type TaskState,
+  newRunState,
+} from "../context/state.js";
 import type {
   ChatResponse,
   ContentBlock,
@@ -29,6 +35,8 @@ export interface LoopOptions {
   tools: readonly Tool[];
   systemPrompt: string;
   issue: string;
+  /** The approved plan, rendered. Pinned in every request. */
+  plan?: string;
   budget: Budget;
   maxOutputTokens?: number;
   /** Keep this many recent steps in full. Leave unset until compaction exists (M5). */
@@ -46,6 +54,8 @@ export interface LoopResult {
   costUsd: number;
   usage: Usage;
   submission?: Submission;
+  /** Set when the plan phase ended with `submit_plan`. */
+  plan?: Plan;
   state: TaskState;
   /** The sandbox diff at the end, or "" if it could not be read. */
   diff: string;
@@ -154,7 +164,7 @@ async function executeAll(l: Loop, calls: ToolCall[], step: number): Promise<Exe
   const done: ExecutedCall[] = [];
   for (const [i, call] of calls.entries()) {
     done.push(await execute(l, call, step, i + 1));
-    if (l.run.submission) break;
+    if (l.run.submission ?? l.run.plan) break;
   }
   return done;
 }
@@ -226,6 +236,7 @@ async function runStep(l: Loop, step: number): Promise<StepOutcome> {
   const built = buildRequest({
     system: opts.systemPrompt,
     issue: opts.issue,
+    ...(opts.plan === undefined ? {} : { plan: opts.plan }),
     state: l.run.task,
     workingSet: [...l.workingSet].map(([path, content]): WorkingFile => ({ path, content })),
     history: l.history,
@@ -277,7 +288,7 @@ async function runStep(l: Loop, step: number): Promise<StepOutcome> {
   l.nudgedNoTool = false;
   const done = await executeAll(l, calls, step);
   await log(calls, done);
-  if (l.run.submission) return { done: true, status: "submitted" };
+  if (l.run.submission ?? l.run.plan) return { done: true, status: "submitted" };
   l.history.push(resultsMessage(done, notesNudge(l, step)));
   return { done: false };
 }
@@ -334,6 +345,7 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
     costUsd: l.cost.costUsd,
     usage: l.cost.usage,
     ...(l.run.submission ? { submission: l.run.submission } : {}),
+    ...(l.run.plan ? { plan: l.run.plan } : {}),
     state: l.run.task,
     diff: await finalDiff(opts.sandbox),
   };
