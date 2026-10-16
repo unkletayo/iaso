@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { registerModels } from "./commands/models.js";
+import { registerReplay } from "./commands/replay.js";
 import { registerRun } from "./commands/run.js";
 
 export const VERSION = "0.0.1";
@@ -30,6 +31,7 @@ export function buildProgram(): Command {
     .version(VERSION);
 
   registerRun(program);
+  registerReplay(program);
   registerStub(program, "bench", "Run a benchmark sample", "M7");
   registerModels(program);
   return program;

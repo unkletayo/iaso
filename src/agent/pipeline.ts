@@ -152,6 +152,9 @@ export async function runPlanPhase(
 /** Plan (unless skipped), then run the fix loop with the plan pinned. */
 export async function runPipeline(o: PipelineOptions): Promise<PipelineResult> {
   const total = new Budget(o.limits, o.now);
+  // Kept so `iaso replay --context` can show the issue the model saw.
+  await mkdir(o.runDir, { recursive: true });
+  await writeFile(join(o.runDir, "issue.md"), o.issue, "utf8");
   let plan: Plan | undefined;
   let planCostUsd = 0;
   let planSteps = 0;
