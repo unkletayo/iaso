@@ -169,3 +169,41 @@ describe("AnthropicProvider retry", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("AnthropicProvider: text block cache breakpoints", () => {
+  it("sends cache_control only on text blocks marked cacheBreakpoint", async () => {
+    let params: Anthropic.MessageCreateParamsNonStreaming | undefined;
+    const provider = new AnthropicProvider({ id: "anthropic:m", apiModel: "m" }, (p) => {
+      params = p;
+      return Promise.resolve({
+        id: "x",
+        type: "message",
+        role: "assistant",
+        model: "m",
+        content: [{ type: "text", text: "ok", citations: null }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      } as unknown as Anthropic.Message);
+    });
+    await provider.chat({
+      system: "S",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "pinned", cacheBreakpoint: true },
+            { type: "text", text: "volatile" },
+          ],
+        },
+      ],
+      tools: [],
+      maxOutputTokens: 10,
+    });
+    const content = params?.messages[0]?.content;
+    expect(content).toEqual([
+      { type: "text", text: "pinned", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "volatile" },
+    ]);
+  });
+});

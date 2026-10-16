@@ -1,5 +1,6 @@
-import type { ChatRequest, Message, ToolDef } from "../providers/types.js";
+import type { ChatRequest, ContentBlock, Message, ToolDef } from "../providers/types.js";
 import { MAX_READ_LINES } from "../tools/read-file.js";
+import { splitSteps } from "./compaction.js";
 import { applyStaleness } from "./staleness.js";
 import type { TaskState } from "./state.js";
 
@@ -27,8 +28,10 @@ export interface LayerInput {
   compactedSummary?: string;
   /** Every message since the issue: assistant tool calls and user tool results, in order. */
   history: readonly Message[];
-  /** Keep this many recent steps in full. Omit to keep all (until compaction exists, M5). */
+  /** Keep this many recent steps in full. Omit to keep all. */
   recentSteps?: number | undefined;
+  /** Absolute step number of the first message in `history` (later than 1 after compaction). */
+  firstStep?: number | undefined;
   tools: ToolDef[];
   maxOutputTokens: number;
 }
@@ -77,44 +80,54 @@ export function renderWorkingSet(files: readonly WorkingFile[]): string {
   return `## Files you edited (latest versions)\n\n${files.map(renderFile).join("\n\n")}`;
 }
 
-/** Keep the last `n` steps. A step starts at an assistant message and includes its results. */
-function lastSteps(history: readonly Message[], n: number): { kept: Message[]; omitted: number } {
-  const starts = history.flatMap((m, i) => (m.role === "assistant" ? [i] : []));
-  if (n >= starts.length) return { kept: [...history], omitted: 0 };
-  const cut = starts[starts.length - Math.max(n, 0)] ?? history.length;
-  return { kept: history.slice(cut), omitted: starts.length - Math.max(n, 0) };
-}
-
 /**
  * Spec §7A point 2: rebuild the request from layers, stable first:
- * pinned (system, issue, plan), task state, working set, compacted summary, recent history.
- * The first user message carries the first four; history follows as real messages.
+ * pinned (system, issue, plan), compacted summary, task state, working set, recent history.
+ * The first user message carries all but the history, as separate text blocks. The order differs
+ * from the spec's list on purpose: stable layers first, so two cache breakpoints (after the pinned
+ * block and after the summary) keep the prefix identical between steps. History follows as real
+ * messages.
  */
 export function buildRequest(input: LayerInput): BuiltRequest {
-  const stale = applyStaleness(input.history);
+  const stale = applyStaleness(input.history, input.firstStep);
   const { kept, omitted } =
     input.recentSteps === undefined
       ? { kept: stale.messages, omitted: 0 }
-      : lastSteps(stale.messages, input.recentSteps);
+      : (({ recent, oldSteps }) => ({ kept: recent, omitted: oldSteps }))(
+          splitSteps(stale.messages, input.recentSteps),
+        );
 
-  const parts = [`## Issue\n\n${input.issue}`];
-  if (input.plan !== undefined) parts.push(`## Approved plan\n\n${input.plan}`);
-  parts.push(renderTaskState(input.state));
+  // Pinned: identical on every request of a run.
+  const pinned = [`## Issue\n\n${input.issue}`];
+  if (input.plan !== undefined) pinned.push(`## Approved plan\n\n${input.plan}`);
+
+  // Volatile: changes on most steps, so it goes last and carries no cache breakpoint.
+  const volatile = [renderTaskState(input.state)];
   const workingSet = renderWorkingSet(input.workingSet);
-  if (workingSet !== "") parts.push(workingSet);
-  if (input.compactedSummary !== undefined) {
-    parts.push(`## Summary of earlier steps\n\n${input.compactedSummary}`);
-  } else if (omitted > 0) {
-    parts.push(
+  if (workingSet !== "") volatile.push(workingSet);
+  if (input.compactedSummary === undefined && omitted > 0) {
+    volatile.push(
       `[${String(omitted)} earlier steps are not shown. Your notes above keep what mattered.]`,
     );
   }
 
-  const context: Message = { role: "user", content: [{ type: "text", text: parts.join("\n\n") }] };
+  const content: ContentBlock[] = [
+    { type: "text", text: pinned.join("\n\n"), cacheBreakpoint: true },
+  ];
+  // The summary only changes at compaction, so it sits before the volatile layers.
+  if (input.compactedSummary !== undefined) {
+    content.push({
+      type: "text",
+      text: `## Summary of earlier steps\n\n${input.compactedSummary}`,
+      cacheBreakpoint: true,
+    });
+  }
+  content.push({ type: "text", text: volatile.join("\n\n") });
+
   return {
     request: {
       system: input.system,
-      messages: [context, ...kept],
+      messages: [{ role: "user", content }, ...kept],
       tools: input.tools,
       maxOutputTokens: input.maxOutputTokens,
     },

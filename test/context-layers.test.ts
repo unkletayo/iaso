@@ -32,10 +32,9 @@ const base: LayerInput = {
   maxOutputTokens: 4096,
 };
 
-const firstText = (m: Message | undefined): string => {
-  const block = m?.content[0];
-  return block?.type === "text" ? block.text : "";
-};
+/** All text blocks of a message, joined. The context message has several. */
+const firstText = (m: Message | undefined): string =>
+  (m?.content ?? []).flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n\n");
 
 describe("buildRequest", () => {
   it("with no history sends one user message: issue then notes", () => {
@@ -50,7 +49,7 @@ describe("buildRequest", () => {
     expect(request).not.toHaveProperty("temperature");
   });
 
-  it("puts layers in spec order: issue, plan, notes, working set, summary", () => {
+  it("puts stable layers first: issue, plan, summary, notes, working set", () => {
     const { request } = buildRequest({
       ...base,
       plan: "PLAN-JSON",
@@ -61,13 +60,49 @@ describe("buildRequest", () => {
     const order = [
       "## Issue",
       "## Approved plan",
+      "## Summary of earlier steps",
       "## Your notes",
       "## Files you edited",
-      "## Summary of earlier steps",
     ];
     const at = order.map((h) => text.indexOf(h));
     expect(at.every((i) => i >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  it("splits the context into blocks and puts cache breakpoints after the pinned layer and the summary", () => {
+    const { request } = buildRequest({ ...base, plan: "P", compactedSummary: "S" });
+    const blocks = request.messages[0]?.content ?? [];
+    expect(blocks).toHaveLength(3);
+    expect(blocks.map((b) => b.type === "text" && b.cacheBreakpoint === true)).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect(JSON.stringify(blocks[0])).toContain("Approved plan");
+    expect(JSON.stringify(blocks[1])).toContain("Summary of earlier steps");
+    expect(JSON.stringify(blocks[2])).toContain("Your notes");
+  });
+
+  it("keeps the pinned and summary blocks byte-identical when only notes and files change", () => {
+    const a = buildRequest({ ...base, plan: "P", compactedSummary: "S" }).request.messages[0];
+    const b = buildRequest({
+      ...base,
+      plan: "P",
+      compactedSummary: "S",
+      state: { ...emptyTaskState(), todo: ["new"] },
+      workingSet: [{ path: "/repo/a.js", content: "x\n" }],
+    }).request.messages[0];
+    expect(a?.content.slice(0, 2)).toEqual(b?.content.slice(0, 2));
+    expect(a?.content[2]).not.toEqual(b?.content[2]);
+  });
+
+  it("numbers steps from firstStep when marking outdated reads", () => {
+    const history = [
+      ...step(1, "read_file", { path: "a.js" }, "OLD FILE"),
+      ...step(2, "edit_file", { path: "a.js", oldText: "a", newText: "b" }, "Edited"),
+    ];
+    const flat = JSON.stringify(buildRequest({ ...base, history, firstStep: 10 }).request.messages);
+    expect(flat).toContain("[outdated: file changed at step 11]");
   });
 
   it("appends history after the context message and alternates roles", () => {

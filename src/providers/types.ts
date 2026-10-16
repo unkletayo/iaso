@@ -1,7 +1,8 @@
 export type Role = "user" | "assistant";
 
 export type ContentBlock =
-  | { type: "text"; text: string }
+  /** `cacheBreakpoint` asks the provider to cache the prompt up to and including this block. */
+  | { type: "text"; text: string; cacheBreakpoint?: true }
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; output: string; isError: boolean };
 

@@ -42,6 +42,9 @@ function setup(
   return { provider, fake, options, run: () => runLoop(options) };
 }
 
+/** All text of the first (context) message of a request. */
+const contextText = (req: ChatRequest | undefined): string =>
+  textsOf(req?.messages[0]?.content ?? []).join("\n\n");
 const lastUser = (req: ChatRequest | undefined): ContentBlock[] =>
   req?.messages.at(-1)?.content ?? [];
 const textsOf = (blocks: ContentBlock[]): string[] =>
@@ -201,20 +204,17 @@ describe("runLoop: tools", () => {
     const edit = mockToolCall("e", "edit_file", { path: "a.js", oldText: "bug", newText: "fixed" });
     const s = setup([edit, submitCall()], {}, { "/repo/a.js": "const x = bug;\n" });
     await s.run();
-    const first = s.provider.requests[1]?.messages[0]?.content[0];
-    const text = first?.type === "text" ? first.text : "";
+    const text = contextText(s.provider.requests[1]);
     expect(text).toContain("## Files you edited");
     expect(text).toContain("const x = fixed;");
-    const before = s.provider.requests[0]?.messages[0]?.content[0];
-    expect(before?.type === "text" ? before.text : "").not.toContain("Files you edited");
+    expect(contextText(s.provider.requests[0])).not.toContain("Files you edited");
   });
 
   it("does not add a file to the working set when the edit failed", async () => {
     const edit = mockToolCall("e", "edit_file", { path: "a.js", oldText: "nope", newText: "x" });
     const s = setup([edit, submitCall()], {}, { "/repo/a.js": "abc" });
     await s.run();
-    const first = s.provider.requests[1]?.messages[0]?.content[0];
-    expect(first?.type === "text" ? first.text : "").not.toContain("Files you edited");
+    expect(contextText(s.provider.requests[1])).not.toContain("Files you edited");
   });
 
   it("keeps notes between steps and shows them to the model", async () => {
@@ -225,10 +225,7 @@ describe("runLoop: tools", () => {
     const s = setup([notes, submitCall()]);
     const res = await s.run();
     expect(res.state.phase).toBe("fix");
-    const first = s.provider.requests[1]?.messages[0]?.content[0];
-    expect(first?.type === "text" ? first.text : "").toContain(
-      "- use <= (failed because: off by two)",
-    );
+    expect(contextText(s.provider.requests[1])).toContain("- use <= (failed because: off by two)");
   });
 });
 

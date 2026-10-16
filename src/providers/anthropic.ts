@@ -40,7 +40,11 @@ function toAnthropicMessage(msg: Message): Anthropic.MessageParam {
         is_error: b.isError,
       });
     } else if (b.type === "text" && b.text !== "") {
-      texts.push({ type: "text", text: b.text });
+      texts.push({
+        type: "text",
+        text: b.text,
+        ...(b.cacheBreakpoint ? { cache_control: CACHE } : {}),
+      });
     }
   }
   return { role: "user", content: [...results, ...texts] };
