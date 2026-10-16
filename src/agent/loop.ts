@@ -1,5 +1,6 @@
 import { ContextMeter } from "../context/budget.js";
 import { type WorkingFile, buildRequest } from "../context/layers.js";
+import { LoopDetector, type Repeat } from "../context/loops.js";
 import { classifyCommand, shapeOutput } from "../context/shaping.js";
 import {
   type Plan,
@@ -23,10 +24,16 @@ import type { OutputStore } from "../tools/read-output.js";
 import { type Tool, runTool, toToolDef } from "../tools/schema.js";
 import { truncateOutput } from "../tools/truncate.js";
 import type { Budget } from "./budget.js";
-import { NOTES_NUDGE, NOTES_NUDGE_AFTER_STEPS, NO_TOOL_NUDGE, PROMPT_VERSION } from "./prompts.js";
+import {
+  MAX_LOOP_NUDGES,
+  NOTES_NUDGE,
+  NOTES_NUDGE_AFTER_STEPS,
+  NO_TOOL_NUDGE,
+  PROMPT_VERSION,
+  loopNudge,
+} from "./prompts.js";
 
-/** M5 adds `stuck`. */
-export type RunStatus = "submitted" | "budget_exceeded" | "no_tool_use" | "error";
+export type RunStatus = "submitted" | "budget_exceeded" | "no_tool_use" | "stuck" | "error";
 
 export interface LoopOptions {
   provider: ModelProvider;
@@ -73,6 +80,8 @@ interface ExecutedCall {
   call: ToolCall;
   /** What the model sees: shaped, cut, with a pointer to the full text if it was shortened. */
   shown: string;
+  /** The tool's full output, before shaping. Loop detection reads this. */
+  raw: string;
   isError: boolean;
 }
 
@@ -88,6 +97,9 @@ interface Loop {
   /** True after we nudged for a missing tool call; cleared once the model calls a tool. */
   nudgedNoTool: boolean;
   lastNotesNudgeStep: number;
+  detector: LoopDetector;
+  /** Repeat warnings sent so far. One more repeat after MAX_LOOP_NUDGES ends the run. */
+  loopNudges: number;
 }
 
 const toolCallsOf = (content: ContentBlock[]): ToolCall[] =>
@@ -146,6 +158,7 @@ async function execute(
     return {
       call,
       shown: `Unknown tool "${call.name}". Available tools: ${known}.`,
+      raw: `Unknown tool "${call.name}". Available tools: ${known}.`,
       isError: true,
     };
   }
@@ -155,6 +168,7 @@ async function execute(
   return {
     call,
     shown: await present(l, call, result.output, step, callNo),
+    raw: result.output,
     isError: result.isError,
   };
 }
@@ -186,6 +200,21 @@ function notesNudge(l: Loop, step: number): string[] {
   if (step - since < NOTES_NUDGE_AFTER_STEPS) return [];
   l.lastNotesNudgeStep = step;
   return [NOTES_NUDGE];
+}
+
+/** Show every call to the detector (so counts stay right) and return the first repeat found. */
+function findRepeat(l: Loop, done: ExecutedCall[]): Repeat | undefined {
+  let first: Repeat | undefined;
+  for (const d of done) {
+    const repeat = l.detector.observe({
+      name: d.call.name,
+      input: d.call.input,
+      output: d.raw,
+      isError: d.isError,
+    });
+    first ??= repeat ?? undefined;
+  }
+  return first;
 }
 
 async function logStep(
@@ -289,7 +318,20 @@ async function runStep(l: Loop, step: number): Promise<StepOutcome> {
   const done = await executeAll(l, calls, step);
   await log(calls, done);
   if (l.run.submission ?? l.run.plan) return { done: true, status: "submitted" };
-  l.history.push(resultsMessage(done, notesNudge(l, step)));
+  const nudges = notesNudge(l, step);
+  const repeat = findRepeat(l, done);
+  if (repeat) {
+    l.loopNudges += 1;
+    if (l.loopNudges > MAX_LOOP_NUDGES) {
+      return {
+        done: true,
+        status: "stuck",
+        message: `The agent kept repeating itself after ${String(MAX_LOOP_NUDGES)} warnings: ${repeat.description}.`,
+      };
+    }
+    nudges.push(loopNudge(repeat.description));
+  }
+  l.history.push(resultsMessage(done, nudges));
   return { done: false };
 }
 
@@ -335,6 +377,8 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
     steps: 0,
     nudgedNoTool: false,
     lastNotesNudgeStep: 0,
+    detector: new LoopDetector(),
+    loopNudges: 0,
   };
   const { status, message } = await drive(l);
 

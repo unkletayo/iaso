@@ -51,3 +51,10 @@ export const NOTES_NUDGE =
   "You have not updated your notes for a while. Call notes to record your phase, confirmed facts, and any failed approaches.";
 
 export const NOTES_NUDGE_AFTER_STEPS = 8;
+
+/** Spec §7A point 7: sent when the agent repeats an action. `what` says which one. */
+export const loopNudge = (what: string): string =>
+  `You repeated this (${what}). Read failedApproaches in your notes and choose a different approach.`;
+
+/** Spec §7A point 7: the run ends as stuck on the next repeat after this many nudges. */
+export const MAX_LOOP_NUDGES = 2;

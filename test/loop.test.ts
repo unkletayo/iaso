@@ -235,7 +235,7 @@ describe("runLoop: tools", () => {
 describe("runLoop: nudges", () => {
   it("nudges to update notes after 8 steps without notes, and not on every step after", async () => {
     const script = [
-      ...Array.from({ length: 10 }, (_, i) => bashCall(`c${String(i)}`)),
+      ...Array.from({ length: 10 }, (_, i) => bashCall(`c${String(i)}`, `echo ${String(i)}`)),
       submitCall(),
     ];
     const s = setup(script);
@@ -249,9 +249,9 @@ describe("runLoop: nudges", () => {
 
   it("does not nudge when notes are kept up to date", async () => {
     const script = [
-      ...Array.from({ length: 9 }, (_, i) => bashCall(`c${String(i)}`)),
+      ...Array.from({ length: 9 }, (_, i) => bashCall(`c${String(i)}`, `echo ${String(i)}`)),
       mockToolCall("n", "notes", { todo: ["x"] }),
-      ...Array.from({ length: 6 }, (_, i) => bashCall(`d${String(i)}`)),
+      ...Array.from({ length: 6 }, (_, i) => bashCall(`d${String(i)}`, `echo d${String(i)}`)),
       submitCall(),
     ];
     const s = setup(script);
@@ -349,5 +349,76 @@ describe("runLoop: long output, trajectory", () => {
     const steps = await readTrajectory(path);
     expect(steps).toHaveLength(2);
     expect(steps[0]?.response.text).toBe("hmm");
+  });
+});
+
+describe("runLoop: loop detection", () => {
+  const sameBash = (n: number) =>
+    Array.from({ length: n }, (_, i) => bashCall(`c${String(i)}`, "cat a.txt"));
+  const nudgeTexts = (provider: MockProvider): string[] =>
+    provider.requests.flatMap((r) =>
+      textsOf(lastUser(r)).filter((t) => t.includes("You repeated this")),
+    );
+
+  it("nudges on the third identical command and tells the model what repeated", async () => {
+    const s = setup([...sameBash(3), submitCall()]);
+    const res = await s.run();
+    expect(res.status).toBe("submitted");
+    const nudges = nudgeTexts(s.provider);
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0]).toContain("cat a.txt");
+    expect(nudges[0]).toContain("failedApproaches");
+  });
+
+  it("ends the run as stuck on the repeat after two nudges, and still returns the diff", async () => {
+    const s = setup([...sameBash(6), submitCall()]);
+    const res = await s.run();
+    expect(res.status).toBe("stuck");
+    expect(res.steps).toBe(5);
+    expect(res.message).toContain("2 warnings");
+    expect(res.diff).toBe("DIFF");
+    expect(nudgeTexts(s.provider)).toHaveLength(2);
+  });
+
+  it("logs the step that ended the run", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "iaso-stuck-"));
+    const trajectory = new TrajectoryWriter(join(dir, "t.jsonl"));
+    const s = setup([...sameBash(6)], { trajectory });
+    await s.run();
+    expect(await readTrajectory(trajectory.path)).toHaveLength(5);
+  });
+
+  it("does not flag a repeated command that has an edit in between", async () => {
+    const edit = (id: string, oldText: string, newText: string) =>
+      mockToolCall(id, "edit_file", { path: "a.txt", oldText, newText });
+    const s = setup(
+      [
+        bashCall("c1", "cat a.txt"),
+        edit("e1", "one", "two"),
+        bashCall("c2", "cat a.txt"),
+        edit("e2", "two", "three"),
+        bashCall("c3", "cat a.txt"),
+        submitCall(),
+      ],
+      {},
+      { "/repo/a.txt": "one" },
+    );
+    const res = await s.run();
+    expect(res.status).toBe("submitted");
+    expect(nudgeTexts(s.provider)).toHaveLength(0);
+  });
+
+  it("nudges once per step even when two calls repeat together", async () => {
+    const second = (i: number): ContentBlock => ({
+      type: "tool_call",
+      id: `b${String(i)}`,
+      name: "bash",
+      input: { cmd: "cat b.txt" },
+    });
+    const step = (i: number) =>
+      mockToolCall(`a${String(i)}`, "bash", { cmd: "cat a.txt" }, [second(i)]);
+    const s = setup([step(1), step(2), step(3), submitCall()]);
+    await s.run();
+    expect(nudgeTexts(s.provider)).toHaveLength(1);
   });
 });
