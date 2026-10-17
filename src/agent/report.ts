@@ -8,6 +8,8 @@ export interface ReportInput {
   issue: string;
   model: string;
   planModel?: string;
+  /** Where the issue and repository came from. */
+  source?: { label: string; issueUrl?: string; commit?: string };
   elapsedMs: number;
   result: PipelineResult;
 }
@@ -28,6 +30,7 @@ export function renderReport({
   issue,
   model,
   planModel,
+  source,
   elapsedMs,
   result,
 }: ReportInput): string {
@@ -37,6 +40,11 @@ export function renderReport({
     `# Iaso report: ${runId}`,
     "",
     `- status: ${result.status}${result.message ? ` (${result.message})` : ""}`,
+    ...(source
+      ? [
+          `- source: ${source.label}${source.issueUrl ? ` (${source.issueUrl})` : ""}${source.commit ? `, commit ${source.commit}` : ""}`,
+        ]
+      : []),
     `- model: ${model}${planModel && planModel !== model ? `, plan model: ${planModel}` : ""}`,
     `- steps: ${String(result.steps)} (plan ${String(result.planSteps)})`,
     `- cost: $${result.costUsd.toFixed(4)} (plan $${result.planCostUsd.toFixed(4)})`,

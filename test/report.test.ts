@@ -51,6 +51,24 @@ describe("renderReport", () => {
     expect(md).toMatch(/```diff\n--- a\/x/);
   });
 
+  it("names the source when there is one, and leaves the line out when there is not", () => {
+    expect(renderReport(input)).not.toContain("- source:");
+    const md = renderReport({
+      ...input,
+      source: {
+        label: "acme/widgets#7",
+        issueUrl: "https://github.com/acme/widgets/issues/7",
+        commit: "abc123",
+      },
+    });
+    expect(md).toContain(
+      "- source: acme/widgets#7 (https://github.com/acme/widgets/issues/7), commit abc123",
+    );
+    expect(renderReport({ ...input, source: { label: "/work/repo" } })).toContain(
+      "- source: /work/repo\n",
+    );
+  });
+
   it("reports a run that stopped in the plan phase", () => {
     const rest: PipelineResult = { ...base };
     delete rest.fix;

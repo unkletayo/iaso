@@ -6,7 +6,9 @@ import { buildProgram } from "../src/cli.js";
 import {
   type CommandDeps,
   type RunCommandOptions,
+  chooseSource,
   defaultCompactModel,
+  defaultResolveSource,
   executeCommand,
   newRunId,
   parseReview,
@@ -49,6 +51,7 @@ function deps(provider: MockProvider): { deps: CommandDeps; lines: string[] } {
   return {
     lines,
     deps: {
+      resolveSource: defaultResolveSource,
       createProvider: () => provider,
       createSandbox: () => fake.sandbox,
       review: vi.fn(() => Promise.resolve({ kind: "approve" as const })),
@@ -140,6 +143,94 @@ describe("executeCommand", () => {
   });
 });
 
+describe("chooseSource", () => {
+  it("takes --github alone, or --repo with --issue", () => {
+    expect(chooseSource({ github: "https://github.com/a/b/issues/1" })).toEqual({
+      kind: "github",
+      url: "https://github.com/a/b/issues/1",
+    });
+    expect(chooseSource({ repo: "r", issue: "i.md" })).toEqual({
+      kind: "local",
+      repo: "r",
+      issue: "i.md",
+    });
+  });
+
+  it("refuses a mix, and a missing half", () => {
+    const url = "https://github.com/a/b/issues/1";
+    expect(() => chooseSource({ github: url, repo: "r" })).toThrow(/not both/);
+    expect(() => chooseSource({ github: url, issue: "i.md" })).toThrow(/not both/);
+    expect(() => chooseSource({ repo: "r" })).toThrow(/--github.*--repo and --issue/);
+    expect(() => chooseSource({ issue: "i.md" })).toThrow(/--github.*--repo and --issue/);
+    expect(() => chooseSource({})).toThrow(/--github.*--repo and --issue/);
+  });
+});
+
+describe("executeCommand sources", () => {
+  const github = "https://github.com/acme/widgets/issues/7";
+
+  async function fromGithub(extra: Partial<RunCommandOptions> = {}) {
+    const w = await workspace();
+    await writeFile(join(w.dir, "repo", ".iaso.json"), JSON.stringify({ image: "evil:latest" }));
+    const cleanup = vi.fn(() => Promise.resolve());
+    const provider = new MockProvider([submit]);
+    const d = deps(provider);
+    const created: { image?: string; repoPath: string }[] = [];
+    const fake = fakeSandbox();
+    d.deps.createSandbox = (o) => (created.push(o), fake.sandbox);
+    d.deps.resolveSource = vi.fn(() =>
+      Promise.resolve({
+        repoPath: join(w.dir, "repo"),
+        issue: "# the bug from github",
+        label: "acme/widgets#7",
+        issueUrl: github,
+        commit: "0123456789abcdef0123",
+        cleanup,
+      }),
+    );
+    const opts = { ...w.opts };
+    delete opts.repo;
+    delete opts.issue;
+    await executeCommand("run", { ...opts, github, plan: false, ...extra }, d.deps);
+    return { w, d, created, cleanup, runDir: join(w.dir, "runs") };
+  }
+
+  it("runs from a GitHub source, records it in the report, and cleans up", async () => {
+    const { d, cleanup, runDir } = await fromGithub();
+    expect(d.deps.resolveSource).toHaveBeenCalledWith({ kind: "github", url: github });
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(d.lines.join("\n")).toContain("source: acme/widgets#7 @ 0123456789ab");
+    const id = (await readdir(runDir))[0] ?? "";
+    const report = await readFile(join(runDir, id, "report.md"), "utf8");
+    expect(report).toContain(`- source: acme/widgets#7 (${github}), commit 0123456789abcdef0123`);
+    expect(report).toContain("# the bug from github");
+    expect(await readFile(join(runDir, id, "issue.md"), "utf8")).toBe("# the bug from github");
+  });
+
+  it("ignores .iaso.json from a cloned repo unless --config is given", async () => {
+    const { created } = await fromGithub();
+    expect(created[0]?.image).toBeUndefined();
+  });
+
+  it("cleans up when the run fails", async () => {
+    const w = await workspace();
+    const cleanup = vi.fn(() => Promise.resolve());
+    const d = deps(new MockProvider([]));
+    d.deps.resolveSource = () =>
+      Promise.resolve({ repoPath: w.opts.repo ?? "", issue: "x", label: "l", cleanup });
+    await expect(executeCommand("run", { ...w.opts, plan: false }, d.deps)).rejects.toThrow();
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("fails before any source or provider work on a bad flag mix", async () => {
+    const w = await workspace();
+    const d = deps(new MockProvider([]));
+    d.deps.resolveSource = vi.fn();
+    await expect(executeCommand("run", { ...w.opts, github }, d.deps)).rejects.toThrow(/not both/);
+    expect(d.deps.resolveSource).not.toHaveBeenCalled();
+  });
+});
+
 describe("compact model", () => {
   it("defaults to the cheapest tool-calling model of the same provider", () => {
     const catalogue = loadCatalogue();
@@ -182,6 +273,7 @@ describe("cli options", () => {
       expect.arrayContaining([
         "--repo",
         "--issue",
+        "--github",
         "--model",
         "--plan-model",
         "--compact-model",

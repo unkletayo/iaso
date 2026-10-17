@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { type Command, InvalidArgumentError } from "commander";
@@ -12,18 +11,23 @@ import {
 } from "../agent/pipeline.js";
 import { renderPlan } from "../agent/plan.js";
 import { writeReport } from "../agent/report.js";
-import { BUDGET_DEFAULTS, type BudgetLimits, loadConfig } from "../config.js";
+import { BUDGET_DEFAULTS, type BudgetLimits, IasoConfigSchema, loadConfig } from "../config.js";
 import { type Catalogue, findModel, loadCatalogue } from "../models.js";
 import type { ModelProvider } from "../providers/types.js";
 import { createProvider } from "../providers/registry.js";
 import { DockerSandbox } from "../sandbox/docker.js";
 import type { Sandbox } from "../sandbox/types.js";
+import { githubSource } from "../sources/github.js";
+import { SourceError, localSource } from "../sources/local.js";
+import type { Source } from "../sources/types.js";
 
 export const DEFAULT_MODEL = "anthropic:claude-sonnet-5-5";
 
 export interface RunCommandOptions {
-  repo: string;
-  issue: string;
+  repo?: string;
+  issue?: string;
+  /** A GitHub issue URL. Replaces `repo` and `issue`. */
+  github?: string;
   model: string;
   planModel?: string;
   compactModel?: string;
@@ -39,10 +43,38 @@ export interface RunCommandOptions {
 
 /** Everything the command touches outside itself, so tests can swap it. */
 export interface CommandDeps {
+  resolveSource: (o: SourceChoice) => Promise<Source>;
   createProvider: (id: string) => ModelProvider;
   createSandbox: (o: { runId: string; repoPath: string; image?: string }) => Sandbox;
   review: PlanReviewer;
   log: (line: string) => void;
+}
+
+export type SourceChoice =
+  { kind: "local"; repo: string; issue: string } | { kind: "github"; url: string };
+
+/** Exactly one of `--github` or `--repo` with `--issue`. */
+export function chooseSource(
+  opts: Pick<RunCommandOptions, "repo" | "issue" | "github">,
+): SourceChoice {
+  const { repo, issue, github } = opts;
+  if (github !== undefined) {
+    if (repo !== undefined || issue !== undefined) {
+      throw new SourceError("Use --github alone, or --repo with --issue, not both.");
+    }
+    return { kind: "github", url: github };
+  }
+  if (repo === undefined || issue === undefined) {
+    throw new SourceError("Give --github <issue url>, or both --repo and --issue.");
+  }
+  return { kind: "local", repo, issue };
+}
+
+/** The real sources. `GITHUB_TOKEN` is optional and stays on the host. */
+export function defaultResolveSource(choice: SourceChoice): Promise<Source> {
+  if (choice.kind === "local") return localSource(choice);
+  const token = process.env.GITHUB_TOKEN;
+  return githubSource(choice.url, token ? { token } : {});
 }
 
 /** `y` approves, `n` rejects, anything else is feedback. Null means ask again. */
@@ -77,6 +109,7 @@ export function defaultDeps(): CommandDeps {
     console.log(line);
   };
   return {
+    resolveSource: defaultResolveSource,
     createProvider: (id) => createProvider(id),
     createSandbox: ({ runId, repoPath, image }) =>
       new DockerSandbox({ runId, repoPath, ...(image === undefined ? {} : { image }) }),
@@ -108,9 +141,7 @@ export async function executeCommand(
   opts: RunCommandOptions,
   deps: CommandDeps,
 ): Promise<void> {
-  const repo = resolve(opts.repo);
-  const issue = await readFile(resolve(opts.issue), "utf8");
-  const config = loadConfig(repo, opts.config);
+  const choice = chooseSource(opts);
   const fix = setupFor(opts.model, deps);
   const plan = opts.planModel === undefined ? fix : setupFor(opts.planModel, deps);
   const limits: BudgetLimits = {
@@ -125,10 +156,56 @@ export async function executeCommand(
   const started = Date.now();
   const review = opts.approvePlan ? deps.review : undefined;
 
+  deps.log(`run ${runId}: getting the source`);
+  const source = await deps.resolveSource(choice);
+  try {
+    await runWithSource(mode, opts, deps, {
+      source,
+      fix,
+      plan,
+      compact,
+      limits,
+      runId,
+      runDir,
+      started,
+      review,
+    });
+  } finally {
+    await source.cleanup();
+  }
+}
+
+interface Prepared {
+  source: Source;
+  fix: PhaseSetup;
+  plan: PhaseSetup;
+  compact: PhaseSetup;
+  limits: BudgetLimits;
+  runId: string;
+  runDir: string;
+  started: number;
+  review: PlanReviewer | undefined;
+}
+
+async function runWithSource(
+  mode: "run" | "plan",
+  opts: RunCommandOptions,
+  deps: CommandDeps,
+  p: Prepared,
+): Promise<void> {
+  const { source, fix, plan, compact, limits, runId, runDir, started, review } = p;
+  const issue = source.issue;
+  // A cloned repo is not trusted: its .iaso.json could pick the Docker image or add prompt rules.
+  // Only a config the user names with --config applies to it.
+  const config =
+    opts.github !== undefined && opts.config === undefined
+      ? IasoConfigSchema.parse({})
+      : loadConfig(source.repoPath, opts.config);
+  deps.log(`source: ${source.label}${source.commit ? ` @ ${source.commit.slice(0, 12)}` : ""}`);
   deps.log(`run ${runId}: starting sandbox`);
   const sandbox = deps.createSandbox({
     runId,
-    repoPath: repo,
+    repoPath: source.repoPath,
     ...(config.image === undefined ? {} : { image: config.image }),
   });
   await sandbox.start();
@@ -164,6 +241,11 @@ export async function executeCommand(
     await writeReport(runDir, {
       runId,
       issue,
+      source: {
+        label: source.label,
+        ...(source.issueUrl === undefined ? {} : { issueUrl: source.issueUrl }),
+        ...(source.commit === undefined ? {} : { commit: source.commit }),
+      },
       model: opts.model,
       ...(opts.planModel === undefined ? {} : { planModel: opts.planModel }),
       elapsedMs: Date.now() - started,
@@ -193,8 +275,12 @@ function positive(name: string): (value: string) => number {
 
 function addCommonOptions(cmd: Command): Command {
   return cmd
-    .requiredOption("--repo <path>", "repository to fix (copied into the sandbox)")
-    .requiredOption("--issue <file>", "file with the bug report")
+    .option("--repo <path>", "repository to fix (copied into the sandbox); needs --issue")
+    .option("--issue <file>", "file with the bug report; needs --repo")
+    .option(
+      "--github <url>",
+      "GitHub issue URL: reads the issue and clones the repo (GITHUB_TOKEN optional)",
+    )
     .option("--model <id>", "model for reproduce, fix, verify", DEFAULT_MODEL)
     .option("--plan-model <id>", "model for the plan phase (default: --model)")
     .option("--max-steps <n>", "step limit", positive("--max-steps"), BUDGET_DEFAULTS.maxSteps)
