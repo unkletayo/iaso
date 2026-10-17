@@ -31,10 +31,12 @@ import { type Tool, runTool, toToolDef } from "../tools/schema.js";
 import { truncateOutput } from "../tools/truncate.js";
 import type { Budget } from "./budget.js";
 import {
+  BUDGET_NUDGE_AT,
   MAX_LOOP_NUDGES,
   NOTES_NUDGE,
   NOTES_NUDGE_AFTER_STEPS,
   NO_TOOL_NUDGE,
+  budgetNudge,
   PROMPT_VERSION,
   loopNudge,
 } from "./prompts.js";
@@ -109,6 +111,8 @@ interface Loop {
   /** True after we nudged for a missing tool call; cleared once the model calls a tool. */
   nudgedNoTool: boolean;
   lastNotesNudgeStep: number;
+  /** True once the wrap-up warning went out. It is sent at most once per run. */
+  budgetWarned: boolean;
   detector: LoopDetector;
   /** Repeat warnings sent so far. One more repeat after MAX_LOOP_NUDGES ends the run. */
   loopNudges: number;
@@ -229,6 +233,17 @@ function notesNudge(l: Loop, step: number): string[] {
   if (step - since < NOTES_NUDGE_AFTER_STEPS) return [];
   l.lastNotesNudgeStep = step;
   return [NOTES_NUDGE];
+}
+
+/** Warn once when any budget limit is 80% used, so the model submits before the run is cut off. */
+function budgetWarning(l: Loop, step: number): string[] {
+  if (l.budgetWarned) return [];
+  const use = l.opts.budget.used({ steps: step, costUsd: totalCost(l) });
+  if (use.fraction < BUDGET_NUDGE_AT) return [];
+  l.budgetWarned = true;
+  const names = l.opts.tools.map((t) => t.definition.name);
+  const submit = names.includes("submit_plan") ? "submit_plan" : "submit";
+  return [budgetNudge(use.description, submit)];
 }
 
 /** Show every call to the detector (so counts stay right) and return the first repeat found. */
@@ -481,7 +496,7 @@ async function runStep(l: Loop, step: number): Promise<StepOutcome> {
   const done = await executeAll(l, calls, step);
   await log(calls, done);
   if (l.run.submission ?? l.run.plan) return { done: true, status: "submitted" };
-  const nudges = notesNudge(l, step);
+  const nudges = [...notesNudge(l, step), ...budgetWarning(l, step)];
   const repeat = findRepeat(l, done);
   if (repeat) {
     l.loopNudges += 1;
@@ -546,6 +561,7 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
     steps: 0,
     nudgedNoTool: false,
     lastNotesNudgeStep: 0,
+    budgetWarned: false,
     detector: new LoopDetector(),
     loopNudges: 0,
     thresholds: opts.contextWindow === undefined ? undefined : thresholdsFor(opts.contextWindow),

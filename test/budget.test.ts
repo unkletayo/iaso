@@ -44,4 +44,21 @@ describe("Budget", () => {
     expect(budget.check({ steps: 2, costUsd: 9 })).toMatchObject({ ok: false, reason: "steps" });
     expect(budget.check({ steps: 1, costUsd: 0.05 })).toMatchObject({ ok: false, reason: "cost" });
   });
+
+  it("reports the most used limit as a share of that limit", () => {
+    const { budget, clock } = makeBudget();
+    expect(budget.used({ steps: 10, costUsd: 0.1 })).toMatchObject({
+      fraction: 0.2,
+      description: "10 of 50 steps",
+    });
+    expect(budget.used({ steps: 10, costUsd: 0.5 })).toMatchObject({
+      fraction: 0.5,
+      description: "$0.50 of $1.00",
+    });
+    clock.now += 18 * 60_000;
+    expect(budget.used({ steps: 10, costUsd: 0.5 })).toMatchObject({
+      fraction: 0.9,
+      description: "18 of 20 minutes",
+    });
+  });
 });

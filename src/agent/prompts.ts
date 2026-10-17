@@ -52,6 +52,18 @@ export const NOTES_NUDGE =
 
 export const NOTES_NUDGE_AFTER_STEPS = 8;
 
+/** The share of any budget limit that triggers the wrap-up nudge, once per run. */
+export const BUDGET_NUDGE_AT = 0.8;
+
+/**
+ * Sent once when a limit is nearly used. A run that ends on its budget loses even finished work,
+ * so say what to do: stop exploring, run only the checks that matter, and submit.
+ */
+export const budgetNudge = (used: string, submitTool: string): string =>
+  `Budget warning: you have used ${used}. Stop exploring. Run only the checks that still matter ` +
+  `(one test file, not the whole suite, unless it is fast), then call ${submitTool} with what you ` +
+  `have verified. A run that hits its limit loses its work.`;
+
 /** Spec §7A point 7: sent when the agent repeats an action. `what` says which one. */
 export const loopNudge = (what: string): string =>
   `You repeated this (${what}). Read failedApproaches in your notes and choose a different approach.`;

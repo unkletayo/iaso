@@ -262,6 +262,36 @@ describe("runLoop: nudges", () => {
   });
 });
 
+describe("runLoop: budget warning", () => {
+  const limits = { maxSteps: 10, maxCostUsd: 5, maxTimeMinutes: 20 };
+
+  it("warns once at 80% of a limit and names the submit tool", async () => {
+    const script = [
+      ...Array.from({ length: 9 }, (_, i) => bashCall(`c${String(i)}`, `echo ${String(i)}`)),
+      submitCall(),
+    ];
+    const s = setup(script, { budget: new Budget(limits) });
+    await s.run();
+    const warned = s.provider.requests.flatMap((r, i) =>
+      textsOf(lastUser(r)).some((t) => t.includes("Budget warning")) ? [i + 1] : [],
+    );
+    // Step 8 is the first at 80% of 10 steps; its results reach the model at request 9, once.
+    expect(warned).toEqual([9]);
+    const text = textsOf(lastUser(s.provider.requests[8])).join("\n");
+    expect(text).toContain("8 of 10 steps");
+    expect(text).toContain("call submit with");
+  });
+
+  it("stays quiet while the budget has room", async () => {
+    const s = setup([bashCall("a"), bashCall("b"), submitCall()], { budget: new Budget(limits) });
+    await s.run();
+    const warned = s.provider.requests.some((r) =>
+      textsOf(lastUser(r)).some((t) => t.includes("Budget warning")),
+    );
+    expect(warned).toBe(false);
+  });
+});
+
 describe("runLoop: long output, trajectory", () => {
   let dir: string;
   beforeEach(async () => {

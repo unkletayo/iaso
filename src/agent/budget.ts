@@ -10,6 +10,13 @@ export interface BudgetUsage {
   costUsd: number;
 }
 
+/** The limit that is closest to running out, as a share of that limit. */
+export interface BudgetUse {
+  fraction: number;
+  /** e.g. "24 of 30 minutes". */
+  description: string;
+}
+
 /** Spec §7: step, cost and time limits. The clock is injectable so tests need no real waiting. */
 export class Budget {
   private readonly startedAt: number;
@@ -23,6 +30,26 @@ export class Budget {
 
   get elapsedMs(): number {
     return this.now() - this.startedAt;
+  }
+
+  /** How much of the most used limit is gone. Drives the "wrap up" nudge. */
+  used({ steps, costUsd }: BudgetUsage): BudgetUse {
+    const minutes = this.elapsedMs / 60_000;
+    const uses: BudgetUse[] = [
+      {
+        fraction: steps / this.limits.maxSteps,
+        description: `${String(steps)} of ${String(this.limits.maxSteps)} steps`,
+      },
+      {
+        fraction: costUsd / this.limits.maxCostUsd,
+        description: `$${costUsd.toFixed(2)} of $${this.limits.maxCostUsd.toFixed(2)}`,
+      },
+      {
+        fraction: minutes / this.limits.maxTimeMinutes,
+        description: `${String(Math.floor(minutes))} of ${String(this.limits.maxTimeMinutes)} minutes`,
+      },
+    ];
+    return uses.reduce((a, b) => (b.fraction > a.fraction ? b : a));
   }
 
   /** Call before each model call. Reports the first limit that is used up. */
