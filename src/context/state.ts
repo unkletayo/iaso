@@ -51,7 +51,8 @@ export const planSchema = z.strictObject({
   rootCauseHypothesis: z.string().min(1),
   filesToChange: z.array(z.strictObject({ path: z.string().min(1), change: z.string().min(1) })),
   testPlan: z.string().min(1),
-  risks: z.array(z.string().min(1)),
+  // Optional: a small model that leaves it out should not lose the whole plan.
+  risks: z.array(z.string().min(1)).default([]),
   steps: z.array(z.string().min(1)).min(1),
 });
 

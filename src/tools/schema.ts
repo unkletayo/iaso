@@ -57,7 +57,27 @@ export function parseToolInput<S extends z.ZodType>(
   // Provider adapters keep unparseable tool arguments as a raw string.
   const hint =
     typeof raw === "string" ? "The tool input was not valid JSON. Send a JSON object.\n" : "";
-  return { ok: false, error: `${hint}${z.prettifyError(result.error)}` };
+  const fields = describeFields(definition);
+  return {
+    ok: false,
+    error: `${hint}${z.prettifyError(result.error)}${fields === "" ? "" : `\n${fields}`}`,
+  };
+}
+
+/**
+ * "Fields: a (required), b (optional)". A model that keeps leaving a field out often fixes it once
+ * it sees the whole list, not just the complaint about one field.
+ */
+function describeFields(definition: ToolDefinition): string {
+  const schema = z.toJSONSchema(definition.input, { io: "input" }) as {
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
+  const names = Object.keys(schema.properties ?? {});
+  if (names.length === 0) return "";
+  const required = new Set(schema.required);
+  const list = names.map((n) => `${n} (${required.has(n) ? "required" : "optional"})`);
+  return `Fields of ${definition.name}: ${list.join(", ")}. Send every required field in one call.`;
 }
 
 export interface RunToolOptions {

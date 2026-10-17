@@ -66,6 +66,12 @@ describe("parseToolInput", () => {
     }
   });
 
+  it("lists every field, required or optional, so a model can see what it left out", () => {
+    const res = parseToolInput(echo, {});
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("Fields of echo: text (required), times (optional).");
+  });
+
   it("explains when the input was raw, unparseable text", () => {
     const res = parseToolInput(echo, "{oops");
     expect(res.ok).toBe(false);
