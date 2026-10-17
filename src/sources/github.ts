@@ -1,5 +1,11 @@
+import { execFile } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { z } from "zod";
 import { withRetry } from "../providers/retry.js";
+import type { Source } from "./types.js";
 
 const API = "https://api.github.com";
 const PAGE_SIZE = 100;
@@ -44,6 +50,14 @@ export class GithubError extends Error {
   ) {
     super(message);
     this.name = "GithubError";
+  }
+}
+
+/** `git clone` failed. The message has the token removed. */
+export class CloneError extends Error {
+  constructor(message: string, cause: unknown) {
+    super(message, { cause });
+    this.name = "CloneError";
   }
 }
 
@@ -218,4 +232,105 @@ export function renderIssue(issue: GithubIssue): string {
       ? [`\n---\n[${String(issue.omittedComments)} more comments are not shown.]`]
       : [];
   return [...head, ...comments, ...omitted].join("\n");
+}
+
+/** Runs `git` on the host and returns stdout. Injected so tests can watch the arguments and environment. */
+export type GitRunner = (
+  args: readonly string[],
+  opts: { cwd?: string; env: NodeJS.ProcessEnv },
+) => Promise<string>;
+
+const execFileAsync = promisify(execFile);
+
+const runGit: GitRunner = async (args, opts) => {
+  const { stdout } = await execFileAsync("git", [...args], {
+    ...opts,
+    timeout: CLONE_TIMEOUT_MS,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  return stdout;
+};
+
+/** Enough history for `git log` and `git blame` in the sandbox, which has no network. */
+export const CLONE_DEPTH = 50;
+const CLONE_TIMEOUT_MS = 5 * 60_000;
+
+export interface GithubSourceOptions extends FetchIssueOptions {
+  depth?: number;
+  /** Where the temporary clone folder goes. */
+  tmpRoot?: string;
+  /** Test hook: clone from somewhere other than github.com. The token is not sent there. */
+  cloneUrl?: (ref: IssueRef) => string;
+  git?: GitRunner;
+}
+
+const githubCloneUrl = (ref: IssueRef): string => `https://github.com/${ref.owner}/${ref.repo}.git`;
+
+/**
+ * The token reaches git through its environment, as a header for this one process. It is not in the
+ * arguments (visible in `ps`), the URL, or `.git/config` (which the sandbox gets a copy of).
+ */
+function gitEnv(token: string | undefined, sendToken: boolean): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+  if (token && sendToken) {
+    const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+    env.GIT_CONFIG_COUNT = "1";
+    env.GIT_CONFIG_KEY_0 = "http.extraHeader";
+    env.GIT_CONFIG_VALUE_0 = `Authorization: Basic ${basic}`;
+  }
+  return env;
+}
+
+/** Remove the token, in both forms, from text that may be shown to the user. */
+function scrub(text: string, token: string | undefined): string {
+  if (!token) return text;
+  const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+  return text.split(token).join("[token]").split(basic).join("[token]");
+}
+
+/**
+ * `--github <issue url>`: read the issue, then clone the default branch to a temporary folder.
+ * The folder is removed by `cleanup`, and at once if the clone fails.
+ */
+export async function githubSource(issueUrl: string, o: GithubSourceOptions = {}): Promise<Source> {
+  const ref = parseIssueUrl(issueUrl);
+  const issue = await fetchIssue(ref, o);
+  const git = o.git ?? runGit;
+  const cloneUrl = (o.cloneUrl ?? githubCloneUrl)(ref);
+  const sendToken = o.cloneUrl === undefined;
+
+  const root = await mkdtemp(join(o.tmpRoot ?? tmpdir(), "iaso-clone-"));
+  const repoPath = join(root, ref.repo);
+  const cleanup = (): Promise<void> => rm(root, { recursive: true, force: true });
+  try {
+    const env = gitEnv(o.token, sendToken);
+    await git(
+      [
+        "clone",
+        "--depth",
+        String(o.depth ?? CLONE_DEPTH),
+        "--single-branch",
+        "--",
+        cloneUrl,
+        repoPath,
+      ],
+      { env },
+    );
+    const commit = (await git(["rev-parse", "HEAD"], { cwd: repoPath, env })).trim();
+    return {
+      repoPath,
+      issue: renderIssue(issue),
+      label: `${ref.owner}/${ref.repo}#${String(ref.number)}`,
+      issueUrl: issue.url,
+      commit,
+      cleanup,
+    };
+  } catch (err) {
+    await cleanup();
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new CloneError(
+      `Could not clone ${ref.owner}/${ref.repo}: ${scrub(detail, o.token).split("\n").slice(0, 5).join(" ")}`,
+      err,
+    );
+  }
 }
