@@ -11,6 +11,7 @@ import {
   containerName,
 } from "./images.js";
 import { installSignalHandlers, registerForCleanup } from "./cleanup.js";
+import { type PrebuiltRepo, SETUP_CAPABILITY, setupScript } from "./prebuilt.js";
 import { makeTar, tarDirectory } from "./tar.js";
 import type { ExecOptions, ExecResult, Sandbox } from "./types.js";
 
@@ -27,6 +28,10 @@ export interface ContainerSpec {
   name: string;
   image: string;
   runId: string;
+  /** Extra environment, on top of the image's own. */
+  env?: readonly string[];
+  /** Capabilities to keep. Everything else is dropped. */
+  capAdd?: readonly string[];
 }
 
 export interface RawExecResult {
@@ -42,7 +47,8 @@ export interface DockerApi {
   startContainer: (id: string) => Promise<void>;
   /** Extract a tar stream into `destDir` (which must exist). */
   putTar: (id: string, tar: Readable | Buffer, destDir: string) => Promise<void>;
-  exec: (id: string, argv: string[], cwd: string) => Promise<RawExecResult>;
+  /** `user` overrides the container's user for this one command. */
+  exec: (id: string, argv: string[], cwd: string, user?: string) => Promise<RawExecResult>;
   setNetwork: (id: string, enabled: boolean) => Promise<void>;
   /** Force-remove. A container that is already gone is not an error. */
   removeContainer: (id: string) => Promise<void>;
@@ -53,6 +59,8 @@ export interface DockerSandboxOptions {
   image?: string;
   /** Host repo to copy into /repo. Omit when the image already contains /repo. */
   repoPath?: string;
+  /** The image already holds the repo (SWE-bench). It is cut back, linked as /repo and handed over. */
+  prebuilt?: PrebuiltRepo;
   api?: DockerApi;
   /** Tests turn this off so they do not hook the real process. */
   handleSignals?: boolean;
@@ -69,6 +77,9 @@ export class DockerSandbox implements Sandbox {
   private destroyed = false;
 
   constructor(private readonly opts: DockerSandboxOptions) {
+    if (opts.prebuilt !== undefined && opts.repoPath !== undefined) {
+      throw new Error("Give a host repo or a prebuilt image, not both.");
+    }
     this.api = opts.api ?? dockerodeApi();
     this.name = containerName(opts.runId);
     this.image = opts.image ?? DEFAULT_IMAGE;
@@ -87,10 +98,17 @@ export class DockerSandbox implements Sandbox {
         name: this.name,
         image: this.image,
         runId: this.opts.runId,
+        ...(this.opts.prebuilt === undefined
+          ? {}
+          : { env: this.opts.prebuilt.env, capAdd: [SETUP_CAPABILITY] }),
       });
       await this.api.startContainer(this.containerId);
-      await this.ensureRepoDir();
-      if (this.opts.repoPath !== undefined) await this.copyRepoIn(this.opts.repoPath);
+      if (this.opts.prebuilt !== undefined) {
+        await this.adoptPrebuiltRepo(this.opts.prebuilt);
+      } else {
+        await this.ensureRepoDir();
+        if (this.opts.repoPath !== undefined) await this.copyRepoIn(this.opts.repoPath);
+      }
       await this.recordBaseline();
     } catch (err) {
       await this.destroy().catch(() => undefined);
@@ -203,6 +221,21 @@ export class DockerSandbox implements Sandbox {
     );
   }
 
+  /** Run the one-time setup as root (see `setupScript`). The agent's commands never run as root. */
+  private async adoptPrebuiltRepo(repo: PrebuiltRepo): Promise<void> {
+    const res = await this.api.exec(
+      this.requireId(),
+      ["bash", "-c", setupScript(repo.dir)],
+      "/",
+      "0",
+    );
+    if (res.exitCode !== 0) {
+      throw new Error(
+        `Cannot set up ${repo.dir} (exit ${String(res.exitCode)}): ${res.stderr.trim() || res.stdout.trim()}`,
+      );
+    }
+  }
+
   private async copyRepoIn(repoPath: string): Promise<void> {
     const { stream, done } = tarDirectory(repoPath, UID, GID);
     await this.api.putTar(this.requireId(), stream, REPO_DIR);
@@ -285,7 +318,7 @@ export function dockerodeApi(docker: Docker = new Docker()): DockerApi {
         Cmd: ["sleep", "infinity"],
         User: SANDBOX_USER,
         // No secrets in the environment. HOME must be writable for the non-root user.
-        Env: ["HOME=/tmp"],
+        Env: ["HOME=/tmp", ...(spec.env ?? [])],
         Labels: { [CONTAINER_LABEL]: spec.runId },
         HostConfig: {
           NanoCpus: SANDBOX_LIMITS.cpus * 1e9,
@@ -293,6 +326,8 @@ export function dockerodeApi(docker: Docker = new Docker()): DockerApi {
           MemorySwap: SANDBOX_LIMITS.memoryBytes, // equal to Memory: no swap
           PidsLimit: SANDBOX_LIMITS.pids,
           CapDrop: ["ALL"],
+          // Only the setup step (root) can use these; the agent runs as uid 1000 with none.
+          ...(spec.capAdd === undefined ? {} : { CapAdd: [...spec.capAdd] }),
           SecurityOpt: ["no-new-privileges"],
           NetworkMode: "bridge",
         },
@@ -308,10 +343,11 @@ export function dockerodeApi(docker: Docker = new Docker()): DockerApi {
       await docker.getContainer(id).putArchive(tar, { path: destDir });
     },
 
-    async exec(id, argv, cwd) {
+    async exec(id, argv, cwd, user) {
       const exec = await docker.getContainer(id).exec({
         Cmd: argv,
         WorkingDir: cwd,
+        ...(user === undefined ? {} : { User: user }),
         AttachStdout: true,
         AttachStderr: true,
       });
