@@ -17,8 +17,11 @@ import { type LoopResult, type RunStatus, runLoop } from "./loop.js";
 import { type PlanOptions, renderPlan, runPlan } from "./plan.js";
 import { buildSystemPrompt } from "./prompts.js";
 
-/** The plan phase is for reading, so it gets a smaller step cap than the whole run. */
-export const PLAN_MAX_STEPS = 20;
+/**
+ * The plan phase is for reading, so it gets a smaller step cap than the whole run. Real repos
+ * need a dozen reads before a plan, and a model can need a few tries to get `submit_plan` right.
+ */
+export const PLAN_MAX_STEPS = 40;
 /** The first plan, plus one more after reviewer feedback (spec §8). */
 export const MAX_PLAN_ROUNDS = 2;
 
