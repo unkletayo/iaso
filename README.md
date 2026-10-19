@@ -4,7 +4,7 @@ Iaso (Ἰασώ) is the Greek goddess of recovery and healing; this agent brings
 
 Iaso is a command-line coding agent. It takes a bug report and a repository, reproduces the bug with a failing test, applies a minimal fix, runs the tests, and outputs a patch. A human reviews the patch and opens the PR. Iaso never pushes code.
 
-> Status: early development (M6 done). `iaso models`, `iaso plan`, `iaso run` and `iaso replay` work, from a local repo or a GitHub issue URL; `bench` is not built yet.
+> Status: early development (M6 done, M7 in progress). `iaso models`, `iaso plan`, `iaso run` and `iaso replay` work, from a local repo or a GitHub issue URL. `iaso bench` samples SWE-bench Lite and writes `predictions.jsonl`; scoring with the official harness is not wired in yet.
 
 ## Try it
 
@@ -18,7 +18,7 @@ npx tsx src/cli.ts models
 
 `iaso models` lists the model catalogue and shows which API keys are set. API keys are read from environment variables only (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`).
 
-Prices in `models.json` are unverified placeholders for now.
+Copy `.env.example` for the list of variables. Iaso does not load `.env` files; export the variables in your shell. Prices in `models.json` are unverified placeholders for now.
 
 ## Run it on a bug
 
@@ -38,6 +38,45 @@ Each run writes a folder under `./runs/<runId>/` (change it with `--runs`) with 
 `GITHUB_TOKEN` is optional. It raises the GitHub rate limit and lets Iaso read private repos. It stays on your machine and is never passed into the sandbox or stored in the clone. A cloned repo's `.iaso.json` is ignored unless you pass `--config`, because that file can pick the Docker image and add rules to the prompt. Only `/issues/N` URLs work; GitLab and Bitbucket are not supported yet.
 
 A run stops at its limits: `--max-steps` (default 50), `--max-cost` (default $1) and `--max-time` (default 20 minutes). A real repo with a slow test suite may need more, for example `--max-cost 2 --max-time 40`.
+
+## Replay a run
+
+```sh
+npx tsx src/cli.ts replay <runId>                 # print the trajectory
+npx tsx src/cli.ts replay <runId> --context 12    # print what the model saw at step 12
+```
+
+## Benchmark (work in progress)
+
+`iaso bench` runs a seeded sample of SWE-bench Lite in Docker (using prebuilt instance images, with the network cut for the agent) and writes `predictions.jsonl`. It has no default size because it costs money: you must pass `--sample <n>`.
+
+```sh
+npx tsx src/cli.ts bench --sample 10 --seed 42 --model anthropic:claude-haiku-5-5
+```
+
+Other options: `--concurrency`, `--plan-model`, `--compact-model`, `--no-plan`, `--max-steps`, `--max-cost`, `--max-time`, `--out`, `--resume`, `--keep-images`, `--refresh`. See `iaso bench --help`.
+
+## Project config
+
+A repo can carry a `.iaso.json` with optional `image`, `installCommand`, `testCommand`, `relatedTestsPattern`, `extraRules` and `services`. Pass it with `--config`; it is read automatically for local repos only.
+
+## Layout
+
+```
+src/
+  cli.ts          entry point (commander)
+  commands/       models, run/plan, replay, bench
+  agent/          loop, plan phase, pipeline, prompts, report, budget
+  context/        token budget, shaping, staleness, loops, compaction, layers
+  providers/      Anthropic, OpenAI-compatible, mock, registry, retry
+  sandbox/        Docker sandbox, images, prebuilt SWE-bench images
+  sources/        local repo, GitHub issue, SWE-bench loader
+  tools/          bash, read_file, edit_file, notes, submit, submit_plan
+  telemetry/      cost and trajectory logging
+  bench/          benchmark runner
+test/             unit tests, plus opt-in integration, live and net tests
+models.json       model catalogue
+```
 
 ## Development
 
@@ -62,3 +101,5 @@ IASO_NET=1 npx vitest run test/net
 ```
 
 Progress and the build plan are tracked in `PROGRESS.md`.
+
+License: MIT (declared in `package.json`; there is no LICENSE file yet).
