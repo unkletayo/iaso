@@ -2,27 +2,12 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import { registerBench } from "./commands/bench.js";
 import { registerModels } from "./commands/models.js";
 import { registerReplay } from "./commands/replay.js";
 import { registerRun } from "./commands/run.js";
 
 export const VERSION = "0.0.1";
-
-export class NotImplementedError extends Error {
-  constructor(command: string, milestone: string) {
-    super(`"iaso ${command}" is not implemented yet (planned for ${milestone}).`);
-    this.name = "NotImplementedError";
-  }
-}
-
-function registerStub(program: Command, name: string, description: string, milestone: string) {
-  program
-    .command(name)
-    .description(description)
-    .action(() => {
-      throw new NotImplementedError(name, milestone);
-    });
-}
 
 export function buildProgram(): Command {
   const program = new Command()
@@ -32,7 +17,7 @@ export function buildProgram(): Command {
 
   registerRun(program);
   registerReplay(program);
-  registerStub(program, "bench", "Run a benchmark sample", "M7");
+  registerBench(program);
   registerModels(program);
   return program;
 }

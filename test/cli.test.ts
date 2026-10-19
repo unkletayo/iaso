@@ -34,10 +34,10 @@ describe("cli", () => {
     log.mockRestore();
   });
 
-  it("exits 1 with a clear message for stub commands", async () => {
+  it("will not start a bench without --sample, so no paid run starts by accident", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect(await main(["node", "iaso", "bench"])).toBe(1);
-    expect(String(err.mock.calls[0]?.[0])).toMatch(/not implemented yet \(planned for M7\)/);
+    expect(String(err.mock.calls[0]?.[0])).toMatch(/Give --sample <n>/);
     err.mockRestore();
   });
 });
