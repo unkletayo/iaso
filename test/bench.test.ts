@@ -62,6 +62,8 @@ async function setup(
     deps?: Partial<BenchDeps>;
     count?: number;
     sandboxFor?: (inst: SweInstance, events: string[]) => Sandbox;
+    /** Override the model prices, so a mock call can cost real money. */
+    prices?: Partial<ReturnType<typeof findModel>>;
   } = {},
 ) {
   const count = over.count ?? 3;
@@ -86,7 +88,7 @@ async function setup(
       runIds.push(runId);
       return over.sandboxFor ? over.sandboxFor(inst, events) : tracked(events, inst.instanceId);
     },
-    fix: { provider, prices: findModel(loadCatalogue(), MODEL) },
+    fix: { provider, prices: { ...findModel(loadCatalogue(), MODEL), ...over.prices } },
     removeImage: (image) => {
       removed.push(image);
       return Promise.resolve();
@@ -278,6 +280,112 @@ describe("runBench", () => {
   });
 });
 
+/** Each mock model call is 10 input tokens, so $20 per million input tokens makes it cost $0.0002. */
+const CALL_COST = { inputPrice: 20_000, outputPrice: 0, cachedInputPrice: 0 };
+const bash = (id: string) => mockToolCall(id, "bash", { cmd: "echo hi" });
+
+describe("runBench: total cost limit", () => {
+  const limits = { maxSteps: 20, maxCostUsd: 1, maxTimeMinutes: 5 };
+
+  it("stops starting tasks when what is left is too small, and leaves the rest without a record", async () => {
+    const s = await setup({
+      count: 5,
+      prices: CALL_COST,
+      options: { limits, maxTotalCostUsd: 0.5 },
+    });
+    const summary = await runBench(s.options, s.deps);
+
+    // $0.20 per task: the first two fit ($0.5, then $0.3 left); $0.1 is under a quarter of the $1 cap.
+    expect(summary).toMatchObject({ ran: 2, stoppedForCost: true, notStarted: 3 });
+    expect(summary.costUsd).toBeCloseTo(0.4, 5);
+    expect(s.logs.some((l) => l.startsWith("stopping: the total cost limit of $0.50"))).toBe(true);
+    expect((await readTasks(s.options.benchDir)).map((t) => t.instanceId)).toEqual([
+      "owner__repo-000",
+      "owner__repo-001",
+    ]);
+    // Nothing was started for the others: no sandbox, so no image to remove.
+    expect(s.runIds).toHaveLength(2);
+  });
+
+  it("holds a running task to what is left, not to the full per-task cap", async () => {
+    const s = await setup({
+      count: 1,
+      prices: CALL_COST,
+      script: [bash("a"), bash("b"), bash("c"), bash("d"), bash("e"), bash("f"), submit("s")],
+      options: { limits, maxTotalCostUsd: 0.5 },
+    });
+    await runBench(s.options, s.deps);
+    const [task] = await readTasks(s.options.benchDir);
+    // The per-task cap is $1, which would allow 5 calls. The $0.5 total stops it after 3 ($0.6).
+    expect(task).toMatchObject({ status: "budget_exceeded", steps: 3 });
+    expect(task?.costUsd).toBeCloseTo(0.6, 5);
+  });
+
+  it("counts what earlier runs in the folder spent, so a resume cannot go past the limit", async () => {
+    const first = await setup({ count: 3, prices: CALL_COST, options: { limits } });
+    await runBench(first.options, first.deps); // three tasks, $0.6 in all
+
+    const resumed = await setup({
+      count: 5,
+      prices: CALL_COST,
+      script: submits(2),
+      options: { limits, benchDir: first.options.benchDir, resume: true, maxTotalCostUsd: 0.7 },
+    });
+    const summary = await runBench(resumed.options, resumed.deps);
+    // $0.7 - $0.6 = $0.1 left, under a quarter of the $1 cap: nothing new starts.
+    expect(summary).toMatchObject({ ran: 0, skipped: 3, stoppedForCost: true, notStarted: 2 });
+    expect(summary.costUsd).toBeCloseTo(0.6, 5);
+
+    // With more money, the same folder carries on with the two that were not started.
+    const more = await setup({
+      count: 5,
+      prices: CALL_COST,
+      script: submits(2),
+      options: { limits, benchDir: first.options.benchDir, resume: true, maxTotalCostUsd: 2 },
+    });
+    expect(await runBench(more.options, more.deps)).toMatchObject({
+      ran: 2,
+      stoppedForCost: false,
+      notStarted: 0,
+    });
+  });
+
+  it("reserves each running task's cap, so parallel tasks cannot spend more than the total together", async () => {
+    let active = 0;
+    let peak = 0;
+    const s = await setup({
+      count: 4,
+      prices: CALL_COST,
+      options: { limits, maxTotalCostUsd: 0.5, concurrency: 3 },
+      sandboxFor: (inst, events) =>
+        tracked(events, inst.instanceId, {
+          start: async () => {
+            active += 1;
+            peak = Math.max(peak, active);
+            await new Promise((r) => setTimeout(r, 10));
+          },
+          destroy: () => {
+            active -= 1;
+            return Promise.resolve();
+          },
+        }),
+    });
+    const summary = await runBench(s.options, s.deps);
+    // The first task reserves all $0.5, so the other two workers see nothing left and stop.
+    expect(peak).toBe(1);
+    expect(summary.stoppedForCost).toBe(true);
+  });
+
+  it("changes nothing without a limit", async () => {
+    const s = await setup({ count: 3, prices: CALL_COST, options: { limits } });
+    expect(await runBench(s.options, s.deps)).toMatchObject({
+      ran: 3,
+      stoppedForCost: false,
+      notStarted: 0,
+    });
+  });
+});
+
 describe("executeBench", () => {
   const base: BenchCommandOptions = {
     dataset: "swebench-lite",
@@ -398,6 +506,26 @@ describe("executeBench", () => {
     expect(await readPredictions(s.out)).toHaveLength(3);
     expect(await readFile(join(s.out, "results.md"), "utf8")).toContain("**not graded**");
     expect(s.logs.at(-1)).toMatch(/grading failed.*--resume/);
+  });
+
+  it("passes --max-total-cost on: stops early, says so, and marks the results as a partial run", async () => {
+    // A tiny cap, so the first task's one model call already passes it.
+    const s = await commandSetup(
+      { maxCost: 0.0000001, maxTotalCost: 0.0000001 },
+      undefined,
+      gradeFirst(3),
+    );
+    await executeBench(s.opts, s.deps);
+
+    expect(await readTasks(s.out)).toHaveLength(1);
+    expect(s.sandboxed).toHaveLength(1);
+    expect(s.logs.some((l) => l.includes("$0.00 in all"))).toBe(true);
+    expect(s.logs.some((l) => l.startsWith("stopped early: 2 of 3 tasks were not started"))).toBe(
+      true,
+    );
+    const results = await readFile(join(s.out, "results.md"), "utf8");
+    expect(results).toContain("**partial run**: 1 of the 3 sampled tasks were run");
+    expect(results).toContain("**resolved: 1 of 1");
   });
 
   it("rejects an unknown dataset", async () => {

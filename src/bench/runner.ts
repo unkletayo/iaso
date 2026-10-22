@@ -78,6 +78,12 @@ export interface BenchOptions {
   benchDir: string;
   /** Limits for each instance, not for the whole bench. */
   limits: BudgetLimits;
+  /**
+   * Stop starting instances when the money spent in this folder (earlier runs included) reaches
+   * this. A running instance is held to what is left, so the total can pass it by about one model
+   * call per running instance, not more.
+   */
+  maxTotalCostUsd?: number;
   concurrency: number;
   usePlan: boolean;
   /** Skip instances that already have a record. Without it, a folder with records is refused. */
@@ -100,8 +106,16 @@ export interface BenchSummary {
   ran: number;
   skipped: number;
   submitted: number;
+  /** Everything spent in the folder, earlier runs included. */
   costUsd: number;
+  /** The total cost limit ended the bench before every instance had started. */
+  stoppedForCost: boolean;
+  /** Instances left without a record because of that. `--resume` can run them. */
+  notStarted: number;
 }
+
+/** An instance gets less than this share of the per-instance cap only by being skipped instead. */
+export const MIN_CAP_SHARE = 0.25;
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -127,6 +141,8 @@ export async function runBench(o: BenchOptions, deps: BenchDeps): Promise<BenchS
     skipped: o.instances.length - todo.length,
     submitted: existing.filter((t) => t.status === "submitted").length,
     costUsd: existing.reduce((sum, t) => sum + t.costUsd, 0),
+    stoppedForCost: false,
+    notStarted: 0,
   };
   if (summary.skipped > 0) deps.log(`resuming: ${String(summary.skipped)} already done`);
 
@@ -137,7 +153,7 @@ export async function runBench(o: BenchOptions, deps: BenchDeps): Promise<BenchS
     return writes;
   };
 
-  async function runOne(instance: SweInstance, position: number): Promise<void> {
+  async function runOne(instance: SweInstance, position: number, cap: number): Promise<void> {
     const started = Date.now();
     const id = instance.instanceId;
     const runDir = join(o.benchDir, "runs", id);
@@ -154,7 +170,7 @@ export async function runBench(o: BenchOptions, deps: BenchDeps): Promise<BenchS
         ...(deps.compact ? { compact: deps.compact } : {}),
         sandbox,
         issue: renderSweIssue(instance),
-        limits: o.limits,
+        limits: { ...o.limits, maxCostUsd: cap },
         runDir,
         usePlan: o.usePlan,
       });
@@ -204,16 +220,41 @@ export async function runBench(o: BenchOptions, deps: BenchDeps): Promise<BenchS
     }
   }
 
+  // What the instances now running may still spend. Reserved when one starts, given back when it ends.
+  let reserved = 0;
   let next = 0;
   const worker = async (): Promise<void> => {
     for (;;) {
-      const position = next++;
+      const position = next;
       const instance = todo[position];
       if (instance === undefined) return;
-      await runOne(instance, position);
+
+      let cap = o.limits.maxCostUsd;
+      if (o.maxTotalCostUsd !== undefined) {
+        const available = o.maxTotalCostUsd - summary.costUsd - reserved;
+        if (available < MIN_CAP_SHARE * o.limits.maxCostUsd) {
+          if (!summary.stoppedForCost) {
+            summary.stoppedForCost = true;
+            deps.log(
+              `stopping: the total cost limit of $${o.maxTotalCostUsd.toFixed(2)} leaves ` +
+                `$${Math.max(0, available).toFixed(2)} for the next task`,
+            );
+          }
+          return;
+        }
+        cap = Math.min(cap, available);
+      }
+      next += 1;
+      reserved += cap;
+      try {
+        await runOne(instance, position, cap);
+      } finally {
+        reserved -= cap;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(o.concurrency, todo.length) }, worker));
   await writes;
+  summary.notStarted = todo.length - next;
   return summary;
 }

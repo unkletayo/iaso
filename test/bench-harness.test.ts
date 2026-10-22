@@ -411,6 +411,15 @@ describe("renderResults", () => {
     expect(md).toContain("- 1 of 2 tasks have no grade");
   });
 
+  it("marks a run that stopped early as partial, and says nothing when every task ran", () => {
+    const one = [task("a")];
+    const partial = renderResults({ ...base, tasks: one, sampled: 4, report: undefined });
+    expect(partial).toContain("**partial run**: 1 of the 4 sampled tasks were run");
+    const full = renderResults({ ...base, tasks: one, sampled: 1, report: undefined });
+    expect(full).not.toContain("partial run");
+    expect(renderResults({ ...base, tasks: one, report: undefined })).not.toContain("partial run");
+  });
+
   it("copes with no tasks", () => {
     const md = renderResults({ ...base, tasks: [], report: report() });
     expect(md).toContain("**resolved: 0 of 0 (0%)**");

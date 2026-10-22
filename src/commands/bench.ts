@@ -40,6 +40,8 @@ export interface BenchCommandOptions {
   maxSteps: number;
   maxCost: number;
   maxTime: number;
+  /** Stop starting tasks once this much has been spent in the bench folder. */
+  maxTotalCost?: number;
   out?: string;
   resume?: boolean;
   keepImages?: boolean;
@@ -151,7 +153,9 @@ export async function executeBench(
   };
   deps.log(
     `bench: ${String(instances.length)} tasks from ${opts.dataset} (seed ${String(opts.seed)}), ` +
-      `model ${opts.model}, up to $${opts.maxCost.toFixed(2)} each, folder ${benchDir}`,
+      `model ${opts.model}, up to $${opts.maxCost.toFixed(2)} each` +
+      (opts.maxTotalCost === undefined ? "" : `, $${opts.maxTotalCost.toFixed(2)} in all`) +
+      `, folder ${benchDir}`,
   );
 
   const summary = await runBench(
@@ -160,6 +164,7 @@ export async function executeBench(
       modelName: opts.model,
       benchDir,
       limits,
+      ...(opts.maxTotalCost === undefined ? {} : { maxTotalCostUsd: opts.maxTotalCost }),
       concurrency: opts.concurrency,
       usePlan: opts.plan,
       resume: opts.resume ?? false,
@@ -180,9 +185,21 @@ export async function executeBench(
       `Predictions: ${join(benchDir, "predictions.jsonl")}`,
   );
 
+  if (summary.stoppedForCost) {
+    deps.log(
+      `stopped early: ${String(summary.notStarted)} of ${String(summary.total)} tasks were not started ` +
+        "because of --max-total-cost. Run the same command with --resume and a higher limit to do them.",
+    );
+  }
   const ids = new Set(instances.map((i) => i.instanceId));
   const tasks = (await readTasks(benchDir)).filter((t) => ids.has(t.instanceId));
-  const resultsInput = { dataset: opts.dataset, modelName: opts.model, seed: opts.seed, tasks };
+  const resultsInput = {
+    dataset: opts.dataset,
+    modelName: opts.model,
+    seed: opts.seed,
+    tasks,
+    sampled: instances.length,
+  };
   const writeResults = async (report: HarnessReport | undefined): Promise<void> => {
     await writeFile(
       join(benchDir, "results.md"),
@@ -279,6 +296,11 @@ export function registerBench(
       "time limit per task, in minutes",
       positive("--max-time"),
       BUDGET_DEFAULTS.maxTimeMinutes,
+    )
+    .option(
+      "--max-total-cost <usd>",
+      "stop starting tasks when the whole bench has spent this much (it can pass it by one model call)",
+      positive("--max-total-cost"),
     )
     .option(
       "--out <dir>",

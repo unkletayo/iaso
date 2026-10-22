@@ -7,6 +7,8 @@ export interface ResultsInput {
   modelName: string;
   seed: number;
   tasks: readonly TaskRecord[];
+  /** How many tasks the sample had. More than `tasks` means the bench stopped early. */
+  sampled?: number;
   /** Absent when grading was skipped or failed: every task is then "not graded". */
   report: HarnessReport | undefined;
   /** For the header only. */
@@ -85,6 +87,12 @@ export function renderResults(i: ResultsInput): string {
     "",
     `- model: ${i.modelName}`,
     `- seed: ${String(i.seed)}, ${String(total)} tasks`,
+    ...(i.sampled !== undefined && i.sampled > total
+      ? [
+          `- **partial run**: ${String(total)} of the ${String(i.sampled)} sampled tasks were run ` +
+            "(stopped at the total cost limit). The rate below covers only those.",
+        ]
+      : []),
     ...(i.date ? [`- date: ${i.date.toISOString().slice(0, 10)}`] : []),
     i.report
       ? `- **resolved: ${String(resolved)} of ${String(total)} (${rateWithInterval(resolved, total)})**`
