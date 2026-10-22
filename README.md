@@ -4,7 +4,7 @@ Iaso (Ἰασώ) is the Greek goddess of recovery and healing; this agent brings
 
 Iaso is a command-line coding agent. It takes a bug report and a repository, reproduces the bug with a failing test, applies a minimal fix, runs the tests, and outputs a patch. A human reviews the patch and opens the PR. Iaso never pushes code.
 
-> Status: early development (M6 done, M7 in progress). `iaso models`, `iaso plan`, `iaso run` and `iaso replay` work, from a local repo or a GitHub issue URL. `iaso bench` samples SWE-bench Lite and writes `predictions.jsonl`; scoring with the official harness is not wired in yet.
+> Status: early development (M7 done). `iaso models`, `iaso plan`, `iaso run` and `iaso replay` work, from a local repo or a GitHub issue URL. `iaso bench` runs a seeded SWE-bench Lite sample and grades it with the official harness.
 
 ## Try it
 
@@ -46,15 +46,21 @@ npx tsx src/cli.ts replay <runId>                 # print the trajectory
 npx tsx src/cli.ts replay <runId> --context 12    # print what the model saw at step 12
 ```
 
-## Benchmark (work in progress)
+## Benchmark
 
-`iaso bench` runs a seeded sample of SWE-bench Lite in Docker (using prebuilt instance images, with the network cut for the agent) and writes `predictions.jsonl`. It has no default size because it costs money: you must pass `--sample <n>`.
+`iaso bench` runs a seeded sample of SWE-bench Lite in Docker, using the official per-instance images with the network cut for the agent. It writes `predictions.jsonl`, grades it with the official SWE-bench harness, and writes `results.md`. It has no default size because it costs money: you must pass `--sample <n>`.
 
 ```sh
-npx tsx src/cli.ts bench --sample 10 --seed 42 --model anthropic:claude-haiku-5-5
+npx tsx src/cli.ts bench --sample 10 --seed 42 --model anthropic:claude-haiku-5-5 --max-cost 1
 ```
 
-Other options: `--concurrency`, `--plan-model`, `--compact-model`, `--no-plan`, `--max-steps`, `--max-cost`, `--max-time`, `--out`, `--resume`, `--keep-images`, `--refresh`. See `iaso bench --help`.
+The first run creates a Python venv at `~/.iaso/swebench-venv` and installs the pinned harness there (Python 3.10 or newer is needed). Each instance image is about 1 GB and is removed after its task unless you pass `--keep-images`; grading downloads them again. Run one task at a time on a laptop: each sandbox may use 4 GB.
+
+The folder is named from the options (`runs/bench-swebench-lite-<model>-seed42-n10`), so the same command finds it again. A crashed run continues with `--resume`. Pass `--no-evaluate` to skip grading.
+
+One real run of that command: **7 of 10 resolved (95% confidence interval 40%-89%)**, for $1.02 in total (mean $0.10 per task). Ten tasks is a small sample, so that range is wide.
+
+Other options: `--concurrency`, `--plan-model`, `--compact-model`, `--no-plan`, `--max-steps`, `--max-cost` (per task), `--max-time`, `--out`, `--resume`, `--keep-images`, `--refresh`, `--no-evaluate`. See `iaso bench --help`.
 
 ## Project config
 
