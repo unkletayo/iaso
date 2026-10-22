@@ -2,6 +2,7 @@ import { appendFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { type HarnessOptions, type HarnessReport, HarnessError } from "../src/bench/harness.js";
 import { BenchError, readPredictions, readTasks, runBench } from "../src/bench/runner.js";
 import type { BenchDeps, BenchOptions } from "../src/bench/runner.js";
 import {
@@ -290,13 +291,36 @@ describe("executeBench", () => {
     maxTime: 5,
   };
 
-  async function commandSetup(over: Partial<BenchCommandOptions> = {}, memory?: number) {
+  /** A harness report that resolves the first `resolved` of the instances it is asked to grade. */
+  const gradeFirst =
+    (resolved: number) =>
+    (o: HarnessOptions): Promise<HarnessReport> => {
+      const ids = [...o.instanceIds].sort();
+      return Promise.resolve({
+        runId: "iaso-test",
+        dir: "harness",
+        instanceLogs: join("harness", "logs", "run_evaluation", "iaso-test", "m"),
+        resolved: new Set(ids.slice(0, resolved)),
+        unresolved: new Set(ids.slice(resolved)),
+        error: new Set<string>(),
+        emptyPatch: new Set<string>(),
+        incomplete: new Set<string>(),
+        infraFailure: new Set<string>(),
+      });
+    };
+
+  async function commandSetup(
+    over: Partial<BenchCommandOptions> = {},
+    memory?: number,
+    evaluateImpl: BenchCommandDeps["evaluate"] = gradeFirst(2),
+  ) {
     const all = instances(10);
     const logs: string[] = [];
     const provider = new MockProvider(submits(10), MODEL);
     const loadInstances = vi.fn(() => Promise.resolve(all));
     const createProvider = vi.fn(() => provider);
     const sandboxed: string[] = [];
+    const evaluate = vi.fn(evaluateImpl);
     const deps: BenchCommandDeps = {
       loadInstances,
       createProvider,
@@ -306,6 +330,7 @@ describe("executeBench", () => {
       },
       removeImage: () => Promise.resolve(),
       dockerMemoryBytes: () => Promise.resolve(memory),
+      evaluate: evaluate,
       log: (line) => logs.push(line),
     };
     const out = await tmp();
@@ -314,6 +339,7 @@ describe("executeBench", () => {
       logs,
       loadInstances,
       createProvider,
+      evaluate,
       sandboxed,
       out,
       opts: { ...base, out, ...over },
@@ -327,6 +353,51 @@ describe("executeBench", () => {
     await expect(executeBench(opts, s.deps)).rejects.toThrow(/Give --sample <n>/);
     expect(s.loadInstances).not.toHaveBeenCalled();
     expect(s.createProvider).not.toHaveBeenCalled();
+  });
+
+  it("grades the predictions with the harness and writes results.md", async () => {
+    const s = await commandSetup();
+    await executeBench(s.opts, s.deps);
+
+    const expected = sampleInstances(instances(10), 3, 42).map((i) => i.instanceId);
+    expect(s.evaluate).toHaveBeenCalledTimes(1);
+    const call = s.evaluate.mock.calls[0]?.[0];
+    expect(call).toMatchObject({ benchDir: s.out, modelName: MODEL, maxWorkers: 1 });
+    expect([...(call?.instanceIds ?? [])].sort()).toEqual(expected);
+
+    const results = await readFile(join(s.out, "results.md"), "utf8");
+    expect(results).toContain("**resolved: 2 of 3 (67%)**");
+    expect(results).toContain(`- model: ${MODEL}`);
+    expect(s.logs.at(-1)).toContain("resolved 2 of 3");
+  });
+
+  it("grades only this sample, even if the folder holds other tasks", async () => {
+    const s = await commandSetup();
+    await executeBench(s.opts, s.deps);
+    const again = await commandSetup({ out: s.out, resume: true, sample: 2 });
+    await executeBench(again.opts, again.deps);
+    expect(again.evaluate.mock.calls[0]?.[0].instanceIds).toHaveLength(2);
+    expect(await readFile(join(s.out, "results.md"), "utf8")).toContain("2 tasks");
+  });
+
+  it("skips the harness with --no-evaluate and says the results are not graded", async () => {
+    const s = await commandSetup({ evaluate: false });
+    await executeBench(s.opts, s.deps);
+    expect(s.evaluate).not.toHaveBeenCalled();
+    const results = await readFile(join(s.out, "results.md"), "utf8");
+    expect(results).toContain("**not graded**");
+    expect(results).not.toContain("resolved:");
+    expect(s.logs.at(-1)).toContain("not graded (--no-evaluate)");
+  });
+
+  it("keeps the predictions and an ungraded results.md when the harness fails, and says how to retry", async () => {
+    const s = await commandSetup({}, undefined, () =>
+      Promise.reject(new HarnessError("Docker is not running")),
+    );
+    await expect(executeBench(s.opts, s.deps)).rejects.toThrow("Docker is not running");
+    expect(await readPredictions(s.out)).toHaveLength(3);
+    expect(await readFile(join(s.out, "results.md"), "utf8")).toContain("**not graded**");
+    expect(s.logs.at(-1)).toMatch(/grading failed.*--resume/);
   });
 
   it("rejects an unknown dataset", async () => {
@@ -350,9 +421,9 @@ describe("executeBench", () => {
     const s = await commandSetup();
     const summary = await executeBench(s.opts, s.deps);
     expect(summary).toMatchObject({ ran: 3, submitted: 3 });
-    const last = s.logs.at(-1) ?? "";
-    expect(last).toContain("3 of 3 submitted");
-    expect(last).toContain(join(s.out, "predictions.jsonl"));
+    const done = s.logs.find((l) => l.startsWith("done:")) ?? "";
+    expect(done).toContain("3 of 3 submitted");
+    expect(done).toContain(join(s.out, "predictions.jsonl"));
   });
 
   it("warns when the sandboxes could use more memory than Docker has", async () => {

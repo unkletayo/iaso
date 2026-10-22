@@ -1,9 +1,17 @@
+import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { type Command, InvalidArgumentError } from "commander";
 import Docker from "dockerode";
 import { z } from "zod";
 import type { PhaseSetup } from "../agent/pipeline.js";
-import { type BenchSummary, runBench } from "../bench/runner.js";
+import {
+  type HarnessOptions,
+  type HarnessReport,
+  HarnessError,
+  runHarness,
+} from "../bench/harness.js";
+import { renderResults } from "../bench/results.js";
+import { type BenchSummary, readTasks, runBench } from "../bench/runner.js";
 import { BUDGET_DEFAULTS, type BudgetLimits } from "../config.js";
 import { findModel, loadCatalogue } from "../models.js";
 import type { ModelProvider } from "../providers/types.js";
@@ -36,6 +44,8 @@ export interface BenchCommandOptions {
   resume?: boolean;
   keepImages?: boolean;
   refresh?: boolean;
+  /** False with `--no-evaluate`: write predictions and results, but do not run the harness. */
+  evaluate?: boolean;
 }
 
 /** Everything the command touches outside itself, so tests can swap it. */
@@ -46,6 +56,8 @@ export interface BenchCommandDeps {
   removeImage: (image: string) => Promise<void>;
   /** Memory the Docker VM has, if it can be read. */
   dockerMemoryBytes: () => Promise<number | undefined>;
+  /** Grade the predictions with the official harness. */
+  evaluate: (o: HarnessOptions) => Promise<HarnessReport>;
   log: (line: string) => void;
 }
 
@@ -71,6 +83,7 @@ export function defaultBenchDeps(): BenchCommandDeps {
         return undefined;
       }
     },
+    evaluate: (o) => runHarness(o),
     log: (line) => {
       console.log(line);
     },
@@ -166,6 +179,47 @@ export async function executeBench(
       `${String(summary.submitted)} of ${String(summary.total)} submitted, $${summary.costUsd.toFixed(2)}. ` +
       `Predictions: ${join(benchDir, "predictions.jsonl")}`,
   );
+
+  const ids = new Set(instances.map((i) => i.instanceId));
+  const tasks = (await readTasks(benchDir)).filter((t) => ids.has(t.instanceId));
+  const resultsInput = { dataset: opts.dataset, modelName: opts.model, seed: opts.seed, tasks };
+  const writeResults = async (report: HarnessReport | undefined): Promise<void> => {
+    await writeFile(
+      join(benchDir, "results.md"),
+      renderResults({ ...resultsInput, report, date: new Date() }),
+    );
+  };
+
+  if (opts.evaluate === false) {
+    await writeResults(undefined);
+    deps.log(`not graded (--no-evaluate). Results: ${join(benchDir, "results.md")}`);
+    return summary;
+  }
+  let report: HarnessReport;
+  try {
+    report = await deps.evaluate({
+      benchDir,
+      instanceIds: [...ids],
+      modelName: opts.model,
+      maxWorkers: opts.concurrency,
+      log: deps.log,
+    });
+  } catch (err) {
+    // The predictions are safe on disk. Keep the agent-side numbers and say how to grade later.
+    await writeResults(undefined);
+    if (err instanceof HarnessError) {
+      deps.log(
+        `grading failed. Predictions and agent results are saved in ${benchDir}; ` +
+          "run the same command with --resume to grade again.",
+      );
+    }
+    throw err;
+  }
+  await writeResults(report);
+  const resolved = tasks.filter((t) => report.resolved.has(t.instanceId)).length;
+  deps.log(
+    `resolved ${String(resolved)} of ${String(tasks.length)}. Results: ${join(benchDir, "results.md")}`,
+  );
   return summary;
 }
 
@@ -233,6 +287,7 @@ export function registerBench(
     .option("--resume", "continue a bench folder: skip tasks that already finished")
     .option("--keep-images", "keep each instance image after its task (uses disk, saves a re-pull)")
     .option("--refresh", "read the dataset again instead of using the cached copy")
+    .option("--no-evaluate", "do not grade the predictions with the SWE-bench harness")
     .action(async (opts: BenchCommandOptions) => {
       await executeBench(opts, deps());
     });
