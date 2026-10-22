@@ -366,7 +366,7 @@ describe("executeBench", () => {
     expect([...(call?.instanceIds ?? [])].sort()).toEqual(expected);
 
     const results = await readFile(join(s.out, "results.md"), "utf8");
-    expect(results).toContain("**resolved: 2 of 3 (67%)**");
+    expect(results).toContain("**resolved: 2 of 3 (67%, 95% CI 21%–94%)**");
     expect(results).toContain(`- model: ${MODEL}`);
     expect(s.logs.at(-1)).toContain("resolved 2 of 3");
   });

@@ -12,7 +12,7 @@ import {
   outcomeOf,
   runHarness,
 } from "../src/bench/harness.js";
-import { renderResults } from "../src/bench/results.js";
+import { renderResults, wilsonInterval } from "../src/bench/results.js";
 import type { TaskRecord } from "../src/bench/runner.js";
 
 const tmp = (): Promise<string> => mkdtemp(join(tmpdir(), "iaso-harness-"));
@@ -297,6 +297,41 @@ describe("outcomeOf", () => {
   });
 });
 
+describe("wilsonInterval", () => {
+  const round = (x: number): number => Math.round(x * 1000) / 1000;
+
+  it("matches known values for ten tasks", () => {
+    const at = (k: number) => {
+      const { low, high } = wilsonInterval(k, 10);
+      return [round(low), round(high)];
+    };
+    expect(at(5)).toEqual([0.237, 0.763]);
+    expect(at(7)).toEqual([0.397, 0.892]);
+    expect(at(0)).toEqual([0, 0.278]);
+    expect(at(10)).toEqual([0.722, 1]);
+  });
+
+  it("stays inside 0 and 1, and narrows as the sample grows", () => {
+    for (const [k, n] of [
+      [0, 1],
+      [1, 1],
+      [3, 50],
+      [50, 50],
+    ] as const) {
+      const { low, high } = wilsonInterval(k, n);
+      expect(low).toBeGreaterThanOrEqual(0);
+      expect(high).toBeLessThanOrEqual(1);
+    }
+    const small = wilsonInterval(7, 10);
+    const large = wilsonInterval(70, 100);
+    expect(large.high - large.low).toBeLessThan(small.high - small.low);
+  });
+
+  it("knows nothing about zero tries", () => {
+    expect(wilsonInterval(0, 0)).toEqual({ low: 0, high: 1 });
+  });
+});
+
 describe("renderResults", () => {
   const task = (id: string, over: Partial<TaskRecord> = {}): TaskRecord => ({
     instanceId: id,
@@ -325,7 +360,7 @@ describe("renderResults", () => {
     });
     expect(md).toContain("# Benchmark results: swebench-lite");
     expect(md).toContain("- date: 2026-10-22");
-    expect(md).toContain("**resolved: 3 of 4 (75%)**");
+    expect(md).toContain("**resolved: 3 of 4 (75%, 95% CI 30%–95%)**");
     // mean 0.45, median (0.3 + 0.5) / 2 = 0.40, max 0.90, total 1.80
     expect(md).toContain("| $0.45 | $0.40 | $0.90 | $1.80 |");
     // steps: mean 15, median 12.5, max 30

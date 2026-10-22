@@ -30,6 +30,29 @@ const minutes = (ms: number): string => `${(ms / 60_000).toFixed(1)} min`;
 const percent = (part: number, whole: number): string =>
   whole === 0 ? "0%" : `${((100 * part) / whole).toFixed(0)}%`;
 
+/**
+ * The Wilson score interval for `k` successes in `n` tries (95% by default). Unlike the simple
+ * plus-or-minus formula it stays inside 0 to 1 and behaves with small samples and with 0 or n
+ * successes, which is the normal case for a ten-task bench.
+ */
+export function wilsonInterval(k: number, n: number, z = 1.96): { low: number; high: number } {
+  if (n <= 0) return { low: 0, high: 1 };
+  const p = k / n;
+  const z2 = z * z;
+  const denominator = 1 + z2 / n;
+  const centre = (p + z2 / (2 * n)) / denominator;
+  const half = (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / denominator;
+  return { low: Math.max(0, centre - half), high: Math.min(1, centre + half) };
+}
+
+/** "75%, 95% CI 30%–95%" */
+function rateWithInterval(k: number, n: number): string {
+  if (n === 0) return "0%";
+  const { low, high } = wilsonInterval(k, n);
+  const pct = (x: number): string => `${(100 * x).toFixed(0)}%`;
+  return `${percent(k, n)}, 95% CI ${pct(low)}–${pct(high)}`;
+}
+
 /** A table cell: no pipes or line breaks, and not too long. */
 function cell(text: string, limit = 90): string {
   const flat = text.replace(/\s+/g, " ").replaceAll("|", "\\|").trim();
@@ -64,7 +87,7 @@ export function renderResults(i: ResultsInput): string {
     `- seed: ${String(i.seed)}, ${String(total)} tasks`,
     ...(i.date ? [`- date: ${i.date.toISOString().slice(0, 10)}`] : []),
     i.report
-      ? `- **resolved: ${String(resolved)} of ${String(total)} (${percent(resolved, total)})**`
+      ? `- **resolved: ${String(resolved)} of ${String(total)} (${rateWithInterval(resolved, total)})**`
       : "- **not graded**: the SWE-bench harness did not run or did not finish. Predictions are in `predictions.jsonl`.",
     ...(i.report && graded < total
       ? [`- ${String(total - graded)} of ${String(total)} tasks have no grade`]
