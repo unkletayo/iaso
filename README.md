@@ -4,7 +4,7 @@ Iaso (Ἰασώ) is the Greek goddess of recovery and healing; this agent brings
 
 Iaso is a command-line coding agent. It takes a bug report and a repository, reproduces the bug with a failing test, applies a minimal fix, runs the tests, and outputs a patch. A human reviews the patch and opens the PR. Iaso never pushes code.
 
-> Status: early development (M7 done). `iaso models`, `iaso plan`, `iaso run` and `iaso replay` work, from a local repo or a GitHub issue URL. `iaso bench` runs a seeded SWE-bench Lite sample and grades it with the official harness.
+> Status: early development (M7 done, part of M12 built). `iaso models`, `iaso plan`, `iaso run` and `iaso replay` work, from a local repo or a GitHub issue URL. `iaso bench` runs a seeded SWE-bench Lite sample and grades it with the official harness. `iaso pr` drafts a pull request from a finished run; opening it is still a manual step.
 
 ## Try it
 
@@ -39,6 +39,17 @@ Each run writes a folder under `./runs/<runId>/` (change it with `--runs`) with 
 
 A run stops at its limits: `--max-steps` (default 50), `--max-cost` (default $1) and `--max-time` (default 20 minutes). A real repo with a slow test suite may need more, for example `--max-cost 2 --max-time 40`.
 
+## Contribute a fix to an open-source project
+
+Iaso never pushes code or opens a pull request. You stay the author and answer for every PR; Iaso helps you get a reviewed patch and a draft.
+
+1. **Run it on a GitHub issue:** `iaso run --github <issue url>`. Before spending anything, Iaso reads the project's contribution rules from the clone: `CONTRIBUTING`, the PR template, any AI policy, `AGENTS.md`, plus commit style, DCO sign-off and CLA mentions. It saves them to `runs/<id>/conventions.json`. If the rules appear to forbid AI-generated code or contributions, it stops and quotes the lines. This is keyword matching, so it can miss a rule or misread a sentence: read the project's rules yourself too.
+2. **Check the patch yourself.** `runs/<id>/patch.diff` is the fix, `report.md` says what the agent did. Apply it to a fresh clone, run the project's own tests and linter, and confirm the new tests fail without the fix. The agent's own test notes and its confidence are not evidence.
+3. **Draft the PR:** `iaso pr <runId>` shows the files, the full diff, what the project asks of you (CLA, sign-off, changelog, AI policy) and a draft title and body, saved as `runs/<id>/pr-draft.md`. It does not use the network or change anything on GitHub. Anything only you can say (that you reviewed the change, that you ran the tests, that an AI helped) is a `[TODO]` marker, and no checkbox in the project's template is ticked. Read and edit the draft: the generated title and summary are a starting point and are often not good enough to send as they are.
+4. **Open it by hand** for now: fork the repo, branch, `git apply` the patch, commit as yourself, push to your fork, and run `gh pr create --draft`. Opening the PR as a draft lets you try it before the maintainers are asked to review.
+
+Be a considerate contributor: pick an issue nobody has claimed (no assignee, no linked PR), read the project's rules, and open one PR at a time. Maintainers can be slow to respond.
+
 ## Replay a run
 
 ```sh
@@ -60,7 +71,9 @@ The folder is named from the options (`runs/bench-swebench-lite-<model>-seed42-n
 
 One real run of that command: **7 of 10 resolved (95% confidence interval 40%-89%)**, for $1.02 in total (mean $0.10 per task). Ten tasks is a small sample, so that range is wide.
 
-Other options: `--concurrency`, `--plan-model`, `--compact-model`, `--no-plan`, `--max-steps`, `--max-cost` (per task), `--max-time`, `--out`, `--resume`, `--keep-images`, `--refresh`, `--no-evaluate`. See `iaso bench --help`.
+Use `--max-total-cost <usd>` to cap the whole bench: it stops starting tasks when too little is left, holds a running task to what remains, and counts earlier spending in the folder, so `--resume` cannot go past it. Tasks that never started get no record, and `--resume` with a higher limit runs them. `results.md` marks such a run as partial.
+
+Other options: `--concurrency`, `--plan-model`, `--compact-model`, `--no-plan`, `--max-steps`, `--max-cost` (per task), `--max-time`, `--out`, `--resume`, `--keep-images`, `--refresh`, `--max-total-cost`, `--no-evaluate`. See `iaso bench --help`.
 
 ## Project config
 
@@ -71,7 +84,7 @@ A repo can carry a `.iaso.json` with optional `image`, `installCommand`, `testCo
 ```
 src/
   cli.ts          entry point (commander)
-  commands/       models, run/plan, replay, bench
+  commands/       models, run/plan, replay, bench, pr
   agent/          loop, plan phase, pipeline, prompts, report, budget
   context/        token budget, shaping, staleness, loops, compaction, layers
   providers/      Anthropic, OpenAI-compatible, mock, registry, retry
@@ -79,7 +92,8 @@ src/
   sources/        local repo, GitHub issue, SWE-bench loader
   tools/          bash, read_file, edit_file, notes, submit, submit_plan
   telemetry/      cost and trajectory logging
-  bench/          benchmark runner
+  bench/          benchmark runner, harness call, results
+  oss/            project contribution rules and AI-policy reading
 test/             unit tests, plus opt-in integration, live and net tests
 models.json       model catalogue
 ```
