@@ -21,7 +21,13 @@ const plan: Plan = {
   risks: [],
   steps: ["fix"],
 };
-const submit = mockToolCall("s", "submit", { summary: "done", testsAdded: [], confidence: "high" });
+const submit = mockToolCall("s", "submit", {
+  summary: "done",
+  prTitle: "Fix it",
+  prSummary: "Fixes it.",
+  testsAdded: [],
+  confidence: "high",
+});
 
 let runDir = "";
 beforeEach(async () => {
@@ -55,6 +61,9 @@ describe("runPipeline", () => {
     const fixRequest = JSON.stringify(s.provider.requests[1]?.messages[0]);
     expect(fixRequest).toContain("Approved plan");
     expect(fixRequest).toContain("off by one");
+    // The plan phase is over, so the fix loop's notes must not say it is still planning.
+    expect(fixRequest).toContain("phase: reproduce");
+    expect(res.fix?.state.phase).toBe("reproduce");
     expect(s.provider.requests[1]?.tools.map((t) => t.name)).toContain("edit_file");
     expect(s.provider.requests[0]?.tools.map((t) => t.name)).not.toContain("edit_file");
     expect(JSON.parse(await readFile(join(runDir, "plan.json"), "utf8"))).toEqual(plan);
@@ -67,6 +76,8 @@ describe("runPipeline", () => {
     expect(res.plan).toBeUndefined();
     expect(res.planSteps).toBe(0);
     expect(JSON.stringify(s.provider.requests[0]?.messages[0])).not.toContain("Approved plan");
+    // Without a plan phase the agent still has to explore first.
+    expect(res.fix?.state.phase).toBe("plan");
   });
 
   it("uses the plan model for planning and the fix model for fixing", async () => {

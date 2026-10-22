@@ -10,7 +10,7 @@ describe("system prompt", () => {
   const prompt = buildSystemPrompt();
 
   it("is versioned 1.0.0", () => {
-    expect(PROMPT_VERSION).toBe("1.0.0");
+    expect(PROMPT_VERSION).toBe("1.0.1");
   });
 
   it("contains the nine spec rules, including the two about outdated tests", () => {

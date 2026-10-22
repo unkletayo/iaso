@@ -29,7 +29,13 @@ const instance = (n: number): SweInstance => ({
 const instances = (n: number): SweInstance[] => Array.from({ length: n }, (_, i) => instance(i));
 
 const submit = (id: string) =>
-  mockToolCall(id, "submit", { summary: "fixed", testsAdded: [], confidence: "high" });
+  mockToolCall(id, "submit", {
+    summary: "fixed",
+    prTitle: "Fix it",
+    prSummary: "Fixes it.",
+    testsAdded: [],
+    confidence: "high",
+  });
 const submits = (n: number) => Array.from({ length: n }, (_, i) => submit(`s${String(i)}`));
 
 const tmp = (): Promise<string> => mkdtemp(join(tmpdir(), "iaso-bench-"));

@@ -1,5 +1,8 @@
-/** Bump on any change to the text below. Logged on every trajectory line (spec §9). */
-export const PROMPT_VERSION = "1.0.0";
+/**
+ * Bump on any change to the text below, or to what the model is shown (submit fields, the phase
+ * a fix run starts in). Logged on every trajectory line (spec §9).
+ */
+export const PROMPT_VERSION = "1.0.1";
 
 /** Spec §9, verbatim. */
 const BASE_PROMPT = `You are an expert software engineer fixing a bug in the repository at /repo.

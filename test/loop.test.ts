@@ -20,7 +20,13 @@ import { submitTool } from "../src/tools/submit.js";
 
 const prices = { inputPrice: 3, outputPrice: 15, cachedInputPrice: 0.3 };
 const submitCall = (id = "s") =>
-  mockToolCall(id, "submit", { summary: "fixed", testsAdded: ["t.js"], confidence: "high" });
+  mockToolCall(id, "submit", {
+    summary: "fixed",
+    prTitle: "Fix it",
+    prSummary: "Fixes it.",
+    testsAdded: ["t.js"],
+    confidence: "high",
+  });
 const bashCall = (id: string, cmd = "ls") => mockToolCall(id, "bash", { cmd });
 
 function setup(
@@ -188,7 +194,7 @@ describe("runLoop: tools", () => {
           type: "tool_call",
           id: "s",
           name: "submit",
-          input: { summary: "x", testsAdded: [], confidence: "low" },
+          input: { summary: "x", prTitle: "x", prSummary: "x", testsAdded: [], confidence: "low" },
         },
         { type: "tool_call", id: "b", name: "bash", input: { cmd: "rm -rf things" } },
       ],

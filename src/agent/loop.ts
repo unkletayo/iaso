@@ -52,6 +52,8 @@ export interface LoopOptions {
   issue: string;
   /** The approved plan, rendered. Pinned in every request. */
   plan?: string;
+  /** The phase the notes start in. A run that follows a plan starts at `reproduce`. */
+  startPhase?: TaskState["phase"];
   budget: Budget;
   maxOutputTokens?: number;
   /** Keep this many recent steps in full. Without it, and without compaction, all are kept. */
@@ -553,7 +555,7 @@ async function drive(l: Loop): Promise<Ending> {
 export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
   const l: Loop = {
     opts,
-    run: newRunState(),
+    run: newRunState(opts.startPhase),
     history: [],
     workingSet: new Map(),
     cost: new CostTracker(opts.prices),

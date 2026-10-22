@@ -59,6 +59,9 @@ function result(over: Partial<PipelineResult> = {}): PipelineResult {
       usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
       submission: {
         summary: "Added the clock widget.",
+        prTitle: "Add a clock widget",
+        prSummary: "Adds a clock widget to the powerline.",
+        assumptions: [],
         testsAdded: ["tests/clock.js"],
         confidence: "high",
         step: 11,

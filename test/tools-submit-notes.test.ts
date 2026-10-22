@@ -50,14 +50,43 @@ describe("notes tool", () => {
   });
 });
 
+const omit = <T extends object>(o: T, key: keyof T): Partial<T> =>
+  Object.fromEntries(Object.entries(o).filter(([k]) => k !== key)) as Partial<T>;
+
 describe("submit tool", () => {
-  const input = { summary: "fixed off-by-one", testsAdded: ["test/a.test.js"], confidence: "high" };
+  const input = {
+    summary: "fixed off-by-one",
+    prTitle: "Include the last item in range",
+    prSummary: "The loop stopped one short. It now includes the last item.",
+    assumptions: ["An empty range returns 0; the issue does not say."],
+    testsAdded: ["test/a.test.js"],
+    confidence: "high",
+  };
 
   it("records the submission with the step", async () => {
     const run = newRunState();
     const res = await runTool(submitTool, input, { sandbox, step: 12, run });
     expect(res.isError).toBe(false);
     expect(run.submission).toEqual({ ...input, step: 12 });
+  });
+
+  it("takes no assumptions as an empty list", async () => {
+    const run = newRunState();
+    const res = await runTool(submitTool, omit(input, "assumptions"), { sandbox, step: 3, run });
+    expect(res.isError).toBe(false);
+    expect(run.submission?.assumptions).toEqual([]);
+  });
+
+  it("requires a PR title and summary, and keeps the title to one line's length", async () => {
+    const run = newRunState();
+    for (const bad of [
+      omit(input, "prTitle"),
+      omit(input, "prSummary"),
+      { ...input, prTitle: "x".repeat(101) },
+    ]) {
+      expect((await runTool(submitTool, bad, { sandbox, step: 1, run })).isError).toBe(true);
+    }
+    expect(run.submission).toBeUndefined();
   });
 
   it("rejects a second submit and keeps the first", async () => {
@@ -77,6 +106,7 @@ describe("submit tool", () => {
     for (const bad of [
       { ...input, confidence: "certain" },
       { ...input, summary: "" },
+      { ...input, assumptions: [""] },
       { summary: "x" },
     ]) {
       expect((await runTool(submitTool, bad, { sandbox, step: 1, run })).isError).toBe(true);

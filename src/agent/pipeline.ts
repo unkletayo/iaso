@@ -196,7 +196,8 @@ export async function runPipeline(o: PipelineOptions): Promise<PipelineResult> {
     ],
     systemPrompt: buildSystemPrompt(o.extraRules),
     issue: o.issue,
-    ...(plan ? { plan: renderPlan(plan) } : {}),
+    // The plan phase already explored the repo, so the fix loop starts where the work does.
+    ...(plan ? { plan: renderPlan(plan), startPhase: "reproduce" as const } : {}),
     budget: new Budget(remaining(o.limits, planCostUsd, total.elapsedMs), o.now),
     trajectory: new TrajectoryWriter(join(o.runDir, "trajectory.jsonl")),
     outputs,

@@ -26,7 +26,15 @@ const base: PipelineResult = {
     compactions: 0,
     costUsd: 0.0134,
     usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
-    submission: { summary: "Fixed the loop.", testsAdded: ["t.js"], confidence: "high", step: 7 },
+    submission: {
+      summary: "Fixed the loop.",
+      prTitle: "Fix the loop",
+      prSummary: "The loop stopped early.",
+      assumptions: [],
+      testsAdded: ["t.js"],
+      confidence: "high",
+      step: 7,
+    },
     state: {
       ...emptyTaskState(),
       testsRun: [{ cmd: "node --test", result: "pass", step: 6 }],

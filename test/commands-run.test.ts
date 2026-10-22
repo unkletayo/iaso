@@ -27,7 +27,13 @@ const plan = {
   risks: [],
   steps: ["s"],
 };
-const submit = mockToolCall("s", "submit", { summary: "done", testsAdded: [], confidence: "high" });
+const submit = mockToolCall("s", "submit", {
+  summary: "done",
+  prTitle: "Fix it",
+  prSummary: "Fixes it.",
+  testsAdded: [],
+  confidence: "high",
+});
 
 async function workspace() {
   const dir = await mkdtemp(join(tmpdir(), "iaso-cmd-"));

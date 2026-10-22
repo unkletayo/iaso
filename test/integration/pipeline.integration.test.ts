@@ -38,6 +38,9 @@ const fixCalls = [
   mockToolCall("c3", "bash", { cmd: "node --test 2>&1 | grep -E '^# (pass|fail)'" }),
   mockToolCall("c4", "submit", {
     summary: "sumRange stopped before `end`. Loop now uses <=.",
+    prTitle: "Include the end value in sumRange",
+    prSummary: "sumRange stopped before end. The loop now uses <=.",
+    assumptions: [],
     testsAdded: ["test/range.test.js"],
     confidence: "high",
   }),

@@ -34,9 +34,9 @@ export const taskStatePatchSchema = z.strictObject({
 
 export type TaskStatePatch = z.infer<typeof taskStatePatchSchema>;
 
-export function emptyTaskState(): TaskState {
+export function emptyTaskState(phase: TaskState["phase"] = "plan"): TaskState {
   return {
-    phase: "plan",
+    phase,
     rootCauseHypothesis: "",
     confirmedFacts: [],
     filesExamined: [],
@@ -61,6 +61,12 @@ export type Plan = z.infer<typeof planSchema>;
 /** What `submit` records. The loop (4F) sees it and ends the run. */
 export interface Submission {
   summary: string;
+  /** One line that describes the change (not the bug report), for a pull request title. */
+  prTitle: string;
+  /** What changed and why, written for a maintainer who has not seen the run. */
+  prSummary: string;
+  /** Where the issue left the expected behaviour open and the agent chose. */
+  assumptions: string[];
   testsAdded: string[];
   confidence: "low" | "medium" | "high";
   step: number;
@@ -76,8 +82,8 @@ export interface RunState {
   plan?: Plan;
 }
 
-export function newRunState(): RunState {
-  return { task: emptyTaskState(), lastNotesStep: 0 };
+export function newRunState(phase?: TaskState["phase"]): RunState {
+  return { task: emptyTaskState(phase), lastNotesStep: 0 };
 }
 
 const STEP_SUFFIX = / \(step \d+\)$/;
