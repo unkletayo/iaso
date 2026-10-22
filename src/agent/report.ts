@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import { type PipelineResult } from "./pipeline.js";
 import { renderPlan } from "./plan.js";
 
@@ -12,6 +13,52 @@ export interface ReportInput {
   source?: { label: string; issueUrl?: string; commit?: string };
   elapsedMs: number;
   result: PipelineResult;
+}
+
+/**
+ * `run.json`: the facts about a run that other commands (`iaso pr`) need, so they never have to read
+ * them out of the prose in `report.md`. `testsRun` is what the agent noted with its `notes` tool,
+ * not something Iaso checked.
+ */
+export const runInfoSchema = z.object({
+  runId: z.string(),
+  model: z.string(),
+  planModel: z.string().optional(),
+  status: z.string(),
+  steps: z.number(),
+  costUsd: z.number(),
+  elapsedMs: z.number(),
+  source: z
+    .object({ label: z.string(), issueUrl: z.string().optional(), commit: z.string().optional() })
+    .optional(),
+  /** The issue's title, from the first heading of the issue text. */
+  issueTitle: z.string().optional(),
+  summary: z.string().optional(),
+  testsAdded: z.array(z.string()),
+  confidence: z.enum(["low", "medium", "high"]).optional(),
+  testsRun: z.array(z.object({ cmd: z.string(), result: z.string(), step: z.number() })),
+  patchBytes: z.number(),
+});
+export type RunInfo = z.infer<typeof runInfoSchema>;
+
+export function runInfoOf(input: ReportInput): RunInfo {
+  const sub = input.result.fix?.submission;
+  const title = /^#\s+(.+)$/m.exec(input.issue)?.[1]?.trim();
+  return {
+    runId: input.runId,
+    model: input.model,
+    ...(input.planModel === undefined ? {} : { planModel: input.planModel }),
+    status: input.result.status,
+    steps: input.result.steps,
+    costUsd: input.result.costUsd,
+    elapsedMs: input.elapsedMs,
+    ...(input.source === undefined ? {} : { source: input.source }),
+    ...(title === undefined ? {} : { issueTitle: title }),
+    ...(sub === undefined ? {} : { summary: sub.summary, confidence: sub.confidence }),
+    testsAdded: sub?.testsAdded ?? [],
+    testsRun: input.result.fix?.state.testsRun ?? [],
+    patchBytes: Buffer.byteLength(input.result.diff),
+  };
 }
 
 const fence = (lang: string, body: string): string => {
@@ -83,9 +130,10 @@ export function renderReport({
   return `${lines.join("\n")}\n`;
 }
 
-/** Write `report.md` and `patch.diff` into the run directory. */
+/** Write `report.md`, `patch.diff` and `run.json` into the run directory. */
 export async function writeReport(runDir: string, input: ReportInput): Promise<void> {
   await mkdir(runDir, { recursive: true });
   await writeFile(join(runDir, "report.md"), renderReport(input), "utf8");
   await writeFile(join(runDir, "patch.diff"), input.result.diff, "utf8");
+  await writeFile(join(runDir, "run.json"), JSON.stringify(runInfoOf(input), null, 2), "utf8");
 }
