@@ -59,6 +59,16 @@ describe("renderReport", () => {
     expect(md).toMatch(/```diff\n--- a\/x/);
   });
 
+  it("shows the PR text and the assumptions the agent gave", () => {
+    const { fix } = base;
+    if (fix?.submission === undefined) throw new Error("fixture has no submission");
+    const submission = { ...fix.submission, assumptions: ["Empty range gives 0."] };
+    const md = renderReport({ ...input, result: { ...base, fix: { ...fix, submission } } });
+    expect(md).toContain("title: Fix the loop");
+    expect(md).toContain("The loop stopped early.");
+    expect(md).toContain("## Assumptions\n\n- Empty range gives 0.");
+  });
+
   it("names the source when there is one, and leaves the line out when there is not", () => {
     expect(renderReport(input)).not.toContain("- source:");
     const md = renderReport({

@@ -76,7 +76,8 @@ function titleFor(
   override: string | undefined,
 ): string {
   if (override !== undefined) return override.trim();
-  const issue = info.issueTitle;
+  // Runs from before prompt 1.0.1 have no PR title; the bug report's title is the best they have.
+  const issue = info.prTitle ?? info.issueTitle;
   if (issue === undefined) return `${TODO_MARK}: write a title]`;
   if (conventions?.commitStyle !== "conventional" || CONVENTIONAL_TITLE.test(issue)) return issue;
   const type = /^(?:add|support|implement|introduce|new)\b/i.test(issue) ? "feat" : "fix";
@@ -112,27 +113,35 @@ export function buildDraft(
   const issue = parseIssueUrl(issueUrl);
   const files = summariseDiff(diff);
 
-  const tests =
-    info.testsRun.length === 0
-      ? "- The agent noted no test runs."
-      : `- The agent noted these test runs: ${info.testsRun
-          .map((t) => `\`${t.cmd}\` (${t.result})`)
-          .join(", ")}.`;
+  // The agent's own test runs are not quoted: they include the run that failed before the fix, and
+  // they are unchecked. They are shown to you in the reminders instead.
   const added =
     info.testsAdded.length === 0
       ? "- The agent added no tests."
       : `- Tests added by the agent: ${info.testsAdded.map((t) => `\`${t}\``).join(", ")}.`;
 
   const sections = [
-    (info.summary ?? `${TODO_MARK}: describe the change]`).trim().slice(0, SUMMARY_CHARS),
+    (info.prSummary ?? info.summary ?? `${TODO_MARK}: describe the change]`)
+      .trim()
+      .slice(0, SUMMARY_CHARS),
     `Closes #${String(issue.number)}`,
+  ];
+  if (info.assumptions.length > 0) {
+    sections.push(
+      [
+        "## Choices the issue did not settle",
+        `${TODO_MARK}: check each of these, keep the ones you agree with, and delete the rest]`,
+        ...info.assumptions.map((a) => `- ${a}`),
+      ].join("\n"),
+    );
+  }
+  sections.push(
     [
       "## Testing",
-      tests,
       added,
       `${TODO_MARK}: run the project's own tests and lint yourself, then replace this line with what you ran and saw]`,
     ].join("\n"),
-  ];
+  );
   if (conventions?.aiPolicy.requiresDisclosure) {
     sections.push(
       [
@@ -155,10 +164,15 @@ export function buildDraft(
   }
 
   const reminders: string[] = [
-    "Read the diff and run the project's tests yourself before you open the PR. The test notes " +
-      "and the confidence ('" +
+    "Read the diff and run the project's tests yourself before you open the PR. The agent's " +
+      "confidence ('" +
       (info.confidence ?? "unknown") +
-      "') are the agent's own.",
+      "') is its own opinion, and it is not in the draft.",
+    info.testsRun.length === 0
+      ? "The agent noted no test runs."
+      : `The agent noted these test runs (unchecked, and earlier ones may be from before the fix): ${info.testsRun
+          .map((t) => `${t.cmd} (${t.result})`)
+          .join(", ")}.`,
   ];
   if (conventions === undefined) {
     reminders.push(

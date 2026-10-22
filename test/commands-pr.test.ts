@@ -144,6 +144,9 @@ describe("run.json", () => {
       steps: 14,
       issueTitle: "Add a clock widget",
       summary: "Added the clock widget.",
+      prTitle: "Add a clock widget",
+      prSummary: "Adds a clock widget to the powerline.",
+      assumptions: [],
       testsAdded: ["tests/clock.js"],
       confidence: "high",
       testsRun: [{ cmd: "node --test", result: "pass", step: 9 }],
@@ -187,7 +190,8 @@ describe("iaso pr: the draft", () => {
     expect(out).toContain("-old\n+new");
     expect(out).toContain("Title: feat: add a clock widget");
     expect(out).toContain("Closes #46");
-    expect(out).toContain("`node --test` (pass)");
+    // The agent's test notes go to you as a reminder, not into the text a maintainer reads.
+    expect(out).toContain("node --test (pass)");
     expect(out).toContain("Nothing was sent to GitHub.");
     expect(fetchSpy).not.toHaveBeenCalled();
 
@@ -201,7 +205,8 @@ describe("iaso pr: the draft", () => {
     ]);
     const draft = parseDraftFile(await readFile(join(m.dir, "pr-draft.md"), "utf8"));
     expect(draft.title).toBe("feat: add a clock widget");
-    expect(draft.body).toContain("Added the clock widget.");
+    expect(draft.body).toContain("Adds a clock widget to the powerline.");
+    expect(draft.body).not.toContain("node --test");
   });
 
   it("claims nothing a person has not done: the disclosure and tests are markers, and no box is ticked", async () => {
@@ -236,7 +241,7 @@ describe("iaso pr: the draft", () => {
     expect(out).toContain(
       "PULL_REQUEST_TEMPLATE.md:19: - [ ] If the PR includes AI-generated edits",
     );
-    expect(out).toContain("are the agent's own");
+    expect(out).toContain("its own opinion");
   });
 
   it("drops the reminders and sections that do not apply", async () => {
@@ -291,6 +296,7 @@ describe("iaso pr: the draft", () => {
       elapsedMs: 1,
       source: { label: "a/b#1", issueUrl: "https://github.com/a/b/issues/1" },
       ...(issueTitle === undefined ? {} : { issueTitle }),
+      assumptions: [],
       testsAdded: [],
       testsRun: [],
       patchBytes: 1,
@@ -304,6 +310,64 @@ describe("iaso pr: the draft", () => {
     );
     expect(title(undefined)).toContain("[TODO: write a title]");
     expect(title("Whatever", "chore: my own title")).toBe("chore: my own title");
+  });
+
+  it("uses the agent's PR title and summary, and falls back to the issue for older runs", () => {
+    const base = {
+      runId: "r",
+      model: "m",
+      status: "submitted",
+      steps: 1,
+      costUsd: 0,
+      elapsedMs: 1,
+      source: { label: "a/b#1", issueUrl: "https://github.com/a/b/issues/1" },
+      issueTitle: "Crash when the list is empty",
+      summary: "agent notes",
+      assumptions: [],
+      testsAdded: [],
+      testsRun: [],
+      patchBytes: 1,
+    };
+    const fresh = buildDraft(
+      { ...base, prTitle: "Handle an empty list in sum", prSummary: "sum() now returns 0." },
+      DIFF,
+      conventions,
+      undefined,
+    );
+    expect(fresh.title).toBe("fix: handle an empty list in sum");
+    expect(fresh.body).toContain("sum() now returns 0.");
+    expect(fresh.body).not.toContain("agent notes");
+
+    const old = buildDraft(base, DIFF, conventions, undefined);
+    expect(old.title).toBe("fix: crash when the list is empty");
+    expect(old.body).toContain("agent notes");
+  });
+
+  it("lists the agent's assumptions behind a marker, and omits the section when there are none", () => {
+    const info = {
+      runId: "r",
+      model: "m",
+      status: "submitted",
+      steps: 1,
+      costUsd: 0,
+      elapsedMs: 1,
+      source: { label: "a/b#1", issueUrl: "https://github.com/a/b/issues/1" },
+      testsAdded: [],
+      testsRun: [],
+      patchBytes: 1,
+    };
+    const some = buildDraft(
+      { ...info, assumptions: ["An empty list returns 0."] },
+      DIFF,
+      conventions,
+      undefined,
+    );
+    expect(some.body).toContain("## Choices the issue did not settle");
+    expect(some.body).toContain("- An empty list returns 0.");
+    expect(some.body).toMatch(/\[TODO: check each of these/);
+    expect(
+      buildDraft({ ...info, assumptions: [] }, DIFF, conventions, undefined).body,
+    ).not.toContain("did not settle");
   });
 
   it("keeps a draft you have edited, and rebuilds it only with --redo", async () => {

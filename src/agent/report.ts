@@ -34,6 +34,10 @@ export const runInfoSchema = z.object({
   /** The issue's title, from the first heading of the issue text. */
   issueTitle: z.string().optional(),
   summary: z.string().optional(),
+  /** Written by the agent for a pull request. Absent in runs made before prompt 1.0.1. */
+  prTitle: z.string().optional(),
+  prSummary: z.string().optional(),
+  assumptions: z.array(z.string()).default([]),
   testsAdded: z.array(z.string()),
   confidence: z.enum(["low", "medium", "high"]).optional(),
   testsRun: z.array(z.object({ cmd: z.string(), result: z.string(), step: z.number() })),
@@ -54,7 +58,15 @@ export function runInfoOf(input: ReportInput): RunInfo {
     elapsedMs: input.elapsedMs,
     ...(input.source === undefined ? {} : { source: input.source }),
     ...(title === undefined ? {} : { issueTitle: title }),
-    ...(sub === undefined ? {} : { summary: sub.summary, confidence: sub.confidence }),
+    ...(sub === undefined
+      ? {}
+      : {
+          summary: sub.summary,
+          prTitle: sub.prTitle,
+          prSummary: sub.prSummary,
+          confidence: sub.confidence,
+        }),
+    assumptions: sub?.assumptions ?? [],
     testsAdded: sub?.testsAdded ?? [],
     testsRun: input.result.fix?.state.testsRun ?? [],
     patchBytes: Buffer.byteLength(input.result.diff),
@@ -107,6 +119,8 @@ export function renderReport({
   ];
   if (sub) {
     lines.push("", "## Summary", "", sub.summary, "", `confidence: ${sub.confidence}`);
+    lines.push("", "## Pull request text", "", `title: ${sub.prTitle}`, "", sub.prSummary);
+    lines.push("", "## Assumptions", "", bullets(sub.assumptions));
     lines.push("", "## Tests added", "", bullets(sub.testsAdded));
   }
   if (state) {
