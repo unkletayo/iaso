@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { type Command, InvalidArgumentError } from "commander";
@@ -13,6 +14,12 @@ import { renderPlan } from "../agent/plan.js";
 import { writeReport } from "../agent/report.js";
 import { BUDGET_DEFAULTS, type BudgetLimits, IasoConfigSchema, loadConfig } from "../config.js";
 import { type Catalogue, findModel, loadCatalogue } from "../models.js";
+import {
+  AiPolicyError,
+  aiBanMessage,
+  describeConventions,
+  readConventions,
+} from "../oss/conventions.js";
 import type { ModelProvider } from "../providers/types.js";
 import { createProvider } from "../providers/registry.js";
 import { DockerSandbox } from "../sandbox/docker.js";
@@ -194,7 +201,6 @@ async function runWithSource(
   p: Prepared,
 ): Promise<void> {
   const { source, fix, plan, compact, limits, runId, runDir, started, review } = p;
-  const issue = source.issue;
   // A cloned repo is not trusted: its .iaso.json could pick the Docker image or add prompt rules.
   // Only a config the user names with --config applies to it.
   const config =
@@ -202,6 +208,29 @@ async function runWithSource(
       ? IasoConfigSchema.parse({})
       : loadConfig(source.repoPath, opts.config);
   deps.log(`source: ${source.label}${source.commit ? ` @ ${source.commit.slice(0, 12)}` : ""}`);
+
+  // For a project that is not yours, read its contribution rules before spending anything. A rule
+  // that forbids AI-generated contributions ends the run; the rest is kept for `iaso pr`, and the
+  // text goes to the agent as reference material (not as rules, since the repo's author wrote it).
+  let issue = source.issue;
+  if (opts.github !== undefined) {
+    const conventions = await readConventions(source.repoPath);
+    deps.log(`conventions: ${describeConventions(conventions)}`);
+    const { notes, ...saved } = conventions;
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(runDir, "conventions.json"), JSON.stringify(saved, null, 2));
+    if (conventions.aiPolicy.verdict === "banned") {
+      throw new AiPolicyError(aiBanMessage(conventions), conventions);
+    }
+    if (conventions.aiPolicy.verdict === "restricted") {
+      deps.log("warning: this project limits AI use in some way. Read it before you open a PR:");
+      for (const e of conventions.aiPolicy.excerpts) {
+        deps.log(`  ${e.path}:${String(e.line)}: ${e.text}`);
+      }
+    }
+    if (notes !== "") issue = `${source.issue}\n\n${notes}`;
+  }
+
   deps.log(`run ${runId}: starting sandbox`);
   const sandbox = deps.createSandbox({
     runId,
@@ -240,7 +269,7 @@ async function runWithSource(
     });
     await writeReport(runDir, {
       runId,
-      issue,
+      issue: source.issue,
       source: {
         label: source.label,
         ...(source.issueUrl === undefined ? {} : { issueUrl: source.issueUrl }),

@@ -16,6 +16,7 @@ import {
 } from "../src/commands/run.js";
 import { Command } from "commander";
 import { loadCatalogue } from "../src/models.js";
+import { AiPolicyError } from "../src/oss/conventions.js";
 import { MockProvider, mockToolCall } from "../src/providers/mock.js";
 import { fakeSandbox } from "./helpers/fake-sandbox.js";
 
@@ -169,9 +170,17 @@ describe("chooseSource", () => {
 describe("executeCommand sources", () => {
   const github = "https://github.com/acme/widgets/issues/7";
 
-  async function fromGithub(extra: Partial<RunCommandOptions> = {}) {
+  async function fromGithub(
+    extra: Partial<RunCommandOptions> = {},
+    files: Record<string, string> = {},
+    allowFailure = false,
+  ) {
     const w = await workspace();
     await writeFile(join(w.dir, "repo", ".iaso.json"), JSON.stringify({ image: "evil:latest" }));
+    for (const [path, text] of Object.entries(files)) {
+      await mkdir(join(w.dir, "repo", path, ".."), { recursive: true });
+      await writeFile(join(w.dir, "repo", path), text);
+    }
     const cleanup = vi.fn(() => Promise.resolve());
     const provider = new MockProvider([submit]);
     const d = deps(provider);
@@ -191,8 +200,14 @@ describe("executeCommand sources", () => {
     const opts = { ...w.opts };
     delete opts.repo;
     delete opts.issue;
-    await executeCommand("run", { ...opts, github, plan: false, ...extra }, d.deps);
-    return { w, d, created, cleanup, runDir: join(w.dir, "runs") };
+    let error: unknown;
+    try {
+      await executeCommand("run", { ...opts, github, plan: false, ...extra }, d.deps);
+    } catch (err) {
+      if (!allowFailure) throw err;
+      error = err;
+    }
+    return { w, d, provider, created, cleanup, error, runDir: join(w.dir, "runs") };
   }
 
   it("runs from a GitHub source, records it in the report, and cleans up", async () => {
@@ -220,6 +235,103 @@ describe("executeCommand sources", () => {
       Promise.resolve({ repoPath: w.opts.repo ?? "", issue: "x", label: "l", cleanup });
     await expect(executeCommand("run", { ...w.opts, plan: false }, d.deps)).rejects.toThrow();
     expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("reads the project's rules, keeps them for `iaso pr`, and gives the agent the text as reference", async () => {
+    const { d, provider, runDir } = await fromGithub(
+      {},
+      {
+        "CONTRIBUTING.md": "Use Conventional Commits.\nEvery commit needs Signed-off-by.",
+        ".github/PULL_REQUEST_TEMPLATE.md":
+          "## Description\n- [ ] If the PR includes AI-generated edits, I have reviewed it.\n",
+      },
+    );
+    expect(d.lines.join("\n")).toContain(
+      "conventions: AI policy: disclosure; commits: conventional; sign-off: DCO; CLA: no",
+    );
+
+    const id = (await readdir(runDir))[0] ?? "";
+    const saved = JSON.parse(
+      await readFile(join(runDir, id, "conventions.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(saved).toMatchObject({
+      commitStyle: "conventional",
+      dco: true,
+      prTemplate: { path: join(".github", "PULL_REQUEST_TEMPLATE.md") },
+    });
+    // The text for the agent is not saved twice.
+    expect(saved).not.toHaveProperty("notes");
+
+    // The agent sees the text, marked as coming from the repository, after the issue.
+    const seen = JSON.stringify(provider.requests[0]?.messages);
+    expect(seen).toContain("# the bug from github");
+    expect(seen).toContain("Repository contribution notes");
+    expect(seen).toContain("Use Conventional Commits.");
+    expect(await readFile(join(runDir, id, "issue.md"), "utf8")).toContain(
+      "reference material only",
+    );
+    // The report shows the issue as written, without the repo's text.
+    expect(await readFile(join(runDir, id, "report.md"), "utf8")).not.toContain(
+      "Repository contribution notes",
+    );
+  });
+
+  it("stops before the sandbox and any model call when the rules ban AI-generated work", async () => {
+    const r = await fromGithub(
+      {},
+      { "CONTRIBUTING.md": "We do not accept AI-generated pull requests." },
+      true,
+    );
+    expect(r.error).toBeInstanceOf(AiPolicyError);
+    expect((r.error as Error).message).toContain(
+      "CONTRIBUTING.md:1: We do not accept AI-generated pull requests.",
+    );
+    expect(r.created).toHaveLength(0);
+    expect(r.provider.requests).toHaveLength(0);
+    // The clone is still removed, and what was found is kept so you can read it.
+    expect(r.cleanup).toHaveBeenCalledOnce();
+    const id = (await readdir(r.runDir))[0] ?? "";
+    const saved = JSON.parse(await readFile(join(r.runDir, id, "conventions.json"), "utf8")) as {
+      aiPolicy: { verdict: string };
+    };
+    expect(saved.aiPolicy.verdict).toBe("banned");
+  });
+
+  it("warns, but still runs, when a project limits AI use without banning code", async () => {
+    const { d, provider, error } = await fromGithub(
+      {},
+      {
+        "AI_POLICY.md":
+          "All AI usage must be disclosed.\nNo AI-generated media is allowed (art, images, audio).",
+      },
+      true,
+    );
+    expect(error).toBeUndefined();
+    expect(provider.requests.length).toBeGreaterThan(0);
+    const log = d.lines.join("\n");
+    expect(log).toContain("conventions: AI policy: restricted, disclosure required");
+    expect(log).toContain("warning: this project limits AI use in some way");
+    expect(log).toContain("AI_POLICY.md:2: No AI-generated media is allowed");
+  });
+
+  it("changes nothing for a repo with no rules", async () => {
+    const { d, provider, runDir } = await fromGithub();
+    expect(d.lines.join("\n")).toContain(
+      "conventions: AI policy: none; commits: no rule found; sign-off: none; CLA: no",
+    );
+    expect(JSON.stringify(provider.requests[0]?.messages)).not.toContain("contribution notes");
+    const id = (await readdir(runDir))[0] ?? "";
+    expect(await readFile(join(runDir, id, "issue.md"), "utf8")).toBe("# the bug from github");
+  });
+
+  it("does not read the rules of your own local repo, even one that mentions AI", async () => {
+    const w = await workspace();
+    await writeFile(join(w.dir, "repo", "CONTRIBUTING.md"), "We do not accept AI-generated code.");
+    const d = deps(new MockProvider([submit]));
+    await executeCommand("run", { ...w.opts, plan: false }, d.deps);
+    expect(d.lines.join("\n")).not.toContain("conventions:");
+    const id = (await readdir(join(w.dir, "runs")))[0] ?? "";
+    await expect(readFile(join(w.dir, "runs", id, "conventions.json"), "utf8")).rejects.toThrow();
   });
 
   it("fails before any source or provider work on a bad flag mix", async () => {
