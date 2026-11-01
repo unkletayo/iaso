@@ -128,11 +128,10 @@ const cut = (text: string, max: number): string =>
     ? text
     : `${text.slice(0, max)}\n[cut: ${String(text.length - max)} more characters]`;
 
-function failure(res: Response, ref: IssueRef, hasToken: boolean): GithubError {
-  const what = `${ref.owner}/${ref.repo}#${String(ref.number)}`;
+function failure(res: Response, what: string, hasToken: boolean, noun: string): GithubError {
   if (res.status === 404) {
     return new GithubError(
-      `Issue not found: ${what}.${hasToken ? " Check the URL and that the token can read this repository." : " If the repository is private, set GITHUB_TOKEN."}`,
+      `${noun} not found: ${what}.${hasToken ? " Check the URL and that the token can read this repository." : " If the repository is private, set GITHUB_TOKEN."}`,
       404,
     );
   }
@@ -157,8 +156,16 @@ function failure(res: Response, ref: IssueRef, hasToken: boolean): GithubError {
   return new GithubError(`GitHub API error ${String(res.status)} for ${what}.`, res.status);
 }
 
-/** GET a path of the REST API. Retries 5xx and 429; the token goes to api.github.com only. */
-export async function getJson(path: string, ref: IssueRef, o: FetchIssueOptions): Promise<unknown> {
+/**
+ * GET a path of the REST API. Retries 5xx and 429; the token goes to api.github.com only. `what`
+ * and `noun` only word the error ("Repository not found: acme/widgets.").
+ */
+export async function getApi(
+  path: string,
+  what: string,
+  o: FetchIssueOptions,
+  noun = "Issue",
+): Promise<unknown> {
   const doFetch = o.fetch ?? fetch;
   return withRetry(async () => {
     const res = await doFetch(`${API}${path}`, {
@@ -169,10 +176,14 @@ export async function getJson(path: string, ref: IssueRef, o: FetchIssueOptions)
         ...(o.token ? { Authorization: `Bearer ${o.token}` } : {}),
       },
     });
-    if (!res.ok) throw failure(res, ref, Boolean(o.token));
+    if (!res.ok) throw failure(res, what, Boolean(o.token), noun);
     return res.json();
   }, o.retry);
 }
+
+/** The same for one issue's pages. */
+export const getJson = (path: string, ref: IssueRef, o: FetchIssueOptions): Promise<unknown> =>
+  getApi(path, `${ref.owner}/${ref.repo}#${String(ref.number)}`, o);
 
 /** Read an issue and its comments with the REST API. The token is sent to api.github.com and nowhere else. */
 export async function fetchIssue(ref: IssueRef, o: FetchIssueOptions = {}): Promise<GithubIssue> {
