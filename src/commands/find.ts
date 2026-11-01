@@ -61,7 +61,7 @@ export function renderFind(
   }
   if (!o.hasToken) {
     lines.push(
-      "No GITHUB_TOKEN is set, so GitHub allows 10 searches a minute and at most 8 projects were measured.",
+      "No GITHUB_TOKEN is set, so GitHub allows 10 searches a minute and at most 6 projects were measured.",
     );
   }
   lines.push(

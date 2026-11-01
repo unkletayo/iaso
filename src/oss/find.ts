@@ -79,7 +79,7 @@ const issueItem = z.object({
 });
 const issueSearch = z.object({ items: z.array(issueItem) });
 
-const repoInfo = z.object({
+const repoItem = z.object({
   full_name: z.string(),
   stargazers_count: z.number(),
   archived: z.boolean().default(false),
@@ -87,22 +87,31 @@ const repoInfo = z.object({
   disabled: z.boolean().default(false),
   license: z.object({ spdx_id: z.string().nullable() }).nullable(),
 });
+const repoSearch = z.object({ items: z.array(repoItem) });
 
 const prItem = z.object({ author_association: z.string(), user });
-const prSearch = z.object({ items: z.array(prItem) });
+/** `total_count` is exact; `items` is only the newest page of up to 100. */
+const prSearch = z.object({ total_count: z.number().optional(), items: z.array(prItem) });
 
 const OUTSIDE = new Set(["NONE", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "CONTRIBUTOR"]);
 
-/** GitHub's own label for the author, so a company's staff with a private membership count as outside. */
-export function countMerged(items: z.infer<typeof prSearch>["items"]): {
-  merged: number;
-  externalMerged: number;
-} {
+/**
+ * Merged pull requests by people, and how many came from outside contributors. GitHub's search
+ * returns an exact `total` but only the newest 100 items, so past that the human and outside
+ * shares of the sample are scaled up to the total. The author label is GitHub's own, so a
+ * company's staff with a private membership count as outside.
+ */
+export function countMerged(
+  items: z.infer<typeof prSearch>["items"],
+  total: number = items.length,
+): { merged: number; externalMerged: number } {
   const people = items.filter((p) => p.user?.type !== "Bot" && !p.user?.login.endsWith("[bot]"));
-  return {
-    merged: people.length,
-    externalMerged: people.filter((p) => OUTSIDE.has(p.author_association)).length,
-  };
+  const outside = people.filter((p) => OUTSIDE.has(p.author_association)).length;
+  if (total <= items.length || items.length === 0) {
+    return { merged: people.length, externalMerged: outside };
+  }
+  const scale = total / items.length;
+  return { merged: Math.round(people.length * scale), externalMerged: Math.round(outside * scale) };
 }
 
 /** Why a repository is not worth a contribution right now, or `undefined` when it is. */
@@ -149,79 +158,135 @@ const day = (d: Date): string => d.toISOString().slice(0, 10);
 
 const repoOf = (url: string): string | undefined => /\/repos\/([^/]+\/[^/]+)$/.exec(url)?.[1];
 
+/** How many `repo:` terms one issue search takes (GitHub limits the operators in a query). */
+const REPOS_PER_ISSUE_SEARCH = 5;
+
 /**
  * Find open, unassigned "good first issue" issues in projects that are active and take outside
  * contributions, and drop the ones someone is already on. Read-only. It reads the project's
  * numbers, not its rules: the AI policy is read when you run `iaso run --github` on the issue.
+ *
+ * Projects come first: one repository search returns stars, licence and archived status for up to
+ * 100 projects, so tiny, closed and unlicensed ones are dropped before any call is spent on them.
  */
 export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
   const now = o.now ?? new Date();
   const windowDays = o.windowDays ?? 30;
   const minStars = o.minStars ?? 200;
-  // Search allows 10 calls a minute without a token and 30 with one; each repository costs one.
-  const maxRepos = o.maxRepos ?? (o.token ? 15 : 8);
+  // Search allows 10 calls a minute without a token and 30 with one. A run uses one call for the
+  // projects, one per project measured, and one per five projects for their issues.
+  const maxRepos = o.maxRepos ?? (o.token ? 15 : 6);
   const perRepo = o.perRepo ?? 3;
   const maxClaims = o.maxClaims ?? 10;
   const since = day(new Date(now.getTime() - windowDays * DAY_MS));
   const issuesSince = day(new Date(now.getTime() - (o.issueMaxAgeDays ?? 180) * DAY_MS));
   const skipped: Skipped[] = [];
 
-  const search = (q: string): string =>
-    `/search/issues?${new URLSearchParams({ q, sort: "updated", order: "desc", per_page: "100" }).toString()}`;
-  const terms = [
-    'label:"good first issue"',
-    "state:open",
-    "is:issue",
-    "no:assignee",
-    "archived:false",
-    `updated:>=${issuesSince}`,
-    ...(o.language ? [`language:${o.language}`] : []),
-  ];
-  const found = issueSearch.parse(
-    await getApi(search(terms.join(" ")), "the issue search", o, "Search"),
+  const search = (kind: "issues" | "repositories", q: string): string =>
+    `/search/${kind}?${new URLSearchParams({ q, sort: "updated", order: "desc", per_page: "100" }).toString()}`;
+
+  const projects = repoSearch.parse(
+    await getApi(
+      search(
+        "repositories",
+        [
+          "good-first-issues:>=3",
+          `stars:>=${String(minStars)}`,
+          `pushed:>=${since}`,
+          "archived:false",
+          "fork:false",
+          ...(o.language ? [`language:${o.language}`] : []),
+        ].join(" "),
+      ),
+      "the project search",
+      o,
+      "Search",
+    ),
   );
 
-  // Group by repository, in the order the search returns them (most recently touched first).
-  const byRepo = new Map<string, z.infer<typeof issueItem>[]>();
-  for (const item of found.items) {
-    const name = repoOf(item.repository_url);
-    if (name === undefined || item.pull_request !== undefined) continue;
-    byRepo.set(name, [...(byRepo.get(name) ?? []), item]);
-  }
-  const names = [...byRepo.keys()];
-  for (const name of names.slice(maxRepos)) {
-    skipped.push({
-      what: name,
-      reason: `not measured: over the limit of ${String(maxRepos)} repositories`,
-    });
+  // Cheap checks first, from what the one search already told us.
+  const toMeasure: z.infer<typeof repoItem>[] = [];
+  for (const p of projects.items) {
+    const license = p.license?.spdx_id ?? null;
+    if (p.archived || p.fork || p.disabled) {
+      skipped.push({ what: p.full_name, reason: "archived, disabled or a fork" });
+    } else if (license === null || license === "NOASSERTION") {
+      skipped.push({ what: p.full_name, reason: "no recognised licence" });
+    } else if (p.stargazers_count < minStars) {
+      skipped.push({
+        what: p.full_name,
+        reason: `${String(p.stargazers_count)} stars is under the ${String(minStars)} minimum`,
+      });
+    } else if (toMeasure.length >= maxRepos) {
+      skipped.push({
+        what: p.full_name,
+        reason: `not measured: over the limit of ${String(maxRepos)} repositories`,
+      });
+    } else {
+      toMeasure.push(p);
+    }
   }
 
-  const qualified: { repo: RepoStats; issues: z.infer<typeof issueItem>[] }[] = [];
-  for (const name of names.slice(0, maxRepos)) {
-    const info = repoInfo.parse(await getApi(`/repos/${name}`, name, o, "Repository"));
-    if (info.archived || info.fork || info.disabled) {
-      skipped.push({ what: name, reason: "archived, disabled or a fork" });
-      continue;
-    }
+  const qualified: RepoStats[] = [];
+  for (const p of toMeasure) {
     const prs = prSearch.parse(
-      await getApi(search(`repo:${name} is:pr is:merged merged:>=${since}`), name, o, "Repository"),
+      await getApi(
+        search("issues", `repo:${p.full_name} is:pr is:merged merged:>=${since}`),
+        p.full_name,
+        o,
+        "Repository",
+      ),
     );
     const repo: RepoStats = {
-      fullName: info.full_name,
-      stars: info.stargazers_count,
-      license: info.license?.spdx_id ?? null,
-      ...countMerged(prs.items),
+      fullName: p.full_name,
+      stars: p.stargazers_count,
+      license: p.license?.spdx_id ?? null,
+      ...countMerged(prs.items, prs.total_count ?? prs.items.length),
     };
     const why = repoVerdict(repo, minStars);
-    if (why !== undefined) {
-      skipped.push({ what: name, reason: why });
-      continue;
+    if (why === undefined) qualified.push(repo);
+    else skipped.push({ what: p.full_name, reason: why });
+  }
+
+  // Their open starter issues, five projects to a search.
+  const byRepo = new Map<string, z.infer<typeof issueItem>[]>();
+  let issueCount = 0;
+  for (let i = 0; i < qualified.length; i += REPOS_PER_ISSUE_SEARCH) {
+    const group = qualified.slice(i, i + REPOS_PER_ISSUE_SEARCH);
+    const found = issueSearch.parse(
+      await getApi(
+        search(
+          "issues",
+          [
+            'label:"good first issue"',
+            "state:open",
+            "is:issue",
+            "no:assignee",
+            `updated:>=${issuesSince}`,
+            ...group.map((r) => `repo:${r.fullName}`),
+          ].join(" "),
+        ),
+        "the issue search",
+        o,
+        "Search",
+      ),
+    );
+    issueCount += found.items.length;
+    for (const item of found.items) {
+      const name = repoOf(item.repository_url);
+      if (name === undefined || item.pull_request !== undefined) continue;
+      byRepo.set(name.toLowerCase(), [...(byRepo.get(name.toLowerCase()) ?? []), item]);
     }
-    qualified.push({ repo, issues: byRepo.get(name) ?? [] });
+  }
+  for (const repo of qualified) {
+    if ((byRepo.get(repo.fullName.toLowerCase()) ?? []).length === 0) {
+      skipped.push({ what: repo.fullName, reason: "no open, unassigned starter issue now" });
+    }
   }
 
   const scored: Candidate[] = [];
-  for (const { repo, issues } of qualified) {
+  for (const repo of qualified) {
+    const issues = byRepo.get(repo.fullName.toLowerCase()) ?? [];
     const best = issues
       .map((i) => ({
         i,
@@ -266,5 +331,5 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
   for (const c of scored.slice(maxClaims)) {
     skipped.push({ what: c.url, reason: "not claim-checked: over the limit of issues to check" });
   }
-  return { candidates, skipped, repos: names.length, issues: found.items.length };
+  return { candidates, skipped, repos: projects.items.length, issues: issueCount };
 }

@@ -45,6 +45,29 @@ describe("countMerged", () => {
   });
 });
 
+describe("countMerged with an exact total", () => {
+  const pr = (assoc: string, bot = false) => ({
+    author_association: assoc,
+    user: { login: bot ? "x[bot]" : "dev", type: bot ? "Bot" : "User" },
+  });
+
+  it("scales a sample of 100 up to the exact total, keeping the shares", () => {
+    const sample = [
+      ...Array.from({ length: 50 }, () => pr("MEMBER")),
+      ...Array.from({ length: 30 }, () => pr("CONTRIBUTOR")),
+      ...Array.from({ length: 20 }, () => pr("NONE", true)),
+    ];
+    // 250 merged in all: 80% of the sample were people, 30% of the sample were outside people.
+    expect(countMerged(sample, 250)).toEqual({ merged: 200, externalMerged: 75 });
+  });
+
+  it("is exact when the sample holds everything, or when there is no sample", () => {
+    expect(countMerged([pr("NONE"), pr("MEMBER")], 2)).toEqual({ merged: 2, externalMerged: 1 });
+    expect(countMerged([pr("NONE")])).toEqual({ merged: 1, externalMerged: 1 });
+    expect(countMerged([], 40)).toEqual({ merged: 0, externalMerged: 0 });
+  });
+});
+
 describe("repoVerdict", () => {
   it("accepts a busy, open, licensed project", () => {
     expect(repoVerdict(stats(), 200)).toBeUndefined();
@@ -96,6 +119,8 @@ interface Repo {
   fork?: boolean;
   /** Merged PRs by association; defaults to a healthy mix. */
   prs?: { assoc: string; bot?: boolean }[];
+  /** The exact number GitHub reports, when it is more than the sample. */
+  total?: number;
   issues?: { number: number; comments?: number; age?: number }[];
 }
 
@@ -104,30 +129,46 @@ const healthy: { assoc: string; bot?: boolean }[] = [
   ...Array.from({ length: 8 }, () => ({ assoc: "CONTRIBUTOR" })),
 ];
 
-/** A fake GitHub: issue search, PR search and repository lookups, all by URL. */
+/** A fake GitHub: project search, PR search and issue search, all by URL, with every query kept. */
 function world(repos: Record<string, Repo>) {
-  const calls: string[] = [];
+  const queries: { kind: string; q: string }[] = [];
   const json = (b: unknown): Response => new Response(JSON.stringify(b), { status: 200 });
   const fetchFn = vi.fn((input: string | URL | Request) => {
-    const url = input instanceof Request ? input.url : String(input);
-    calls.push(url);
-    const parsed = new URL(url);
-    if (parsed.pathname === "/search/issues") {
-      const q = parsed.searchParams.get("q") ?? "";
-      if (q.includes("is:pr")) {
-        const name = /repo:(\S+)/.exec(q)?.[1] ?? "";
-        const prs = repos[name]?.prs ?? healthy;
-        return Promise.resolve(
-          json({
-            items: prs.map((p) => ({
-              author_association: p.assoc,
-              user: { login: p.bot ? "x[bot]" : "dev", type: p.bot ? "Bot" : "User" },
-            })),
-          }),
-        );
-      }
-      const items = Object.entries(repos).flatMap(([name, r]) =>
-        (r.issues ?? [{ number: 1 }]).map((i) => ({
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const q = url.searchParams.get("q") ?? "";
+    if (url.pathname === "/search/repositories") {
+      queries.push({ kind: "repos", q });
+      return Promise.resolve(
+        json({
+          items: Object.entries(repos).map(([name, r]) => ({
+            full_name: name,
+            stargazers_count: r.stars ?? 3000,
+            archived: r.archived ?? false,
+            fork: r.fork ?? false,
+            license: r.license === null ? null : { spdx_id: r.license ?? "MIT" },
+          })),
+        }),
+      );
+    }
+    if (url.pathname === "/search/issues" && q.includes("is:pr")) {
+      queries.push({ kind: "prs", q });
+      const name = /repo:(\S+)/.exec(q)?.[1] ?? "";
+      const prs = repos[name]?.prs ?? healthy;
+      return Promise.resolve(
+        json({
+          total_count: repos[name]?.total ?? prs.length,
+          items: prs.map((p) => ({
+            author_association: p.assoc,
+            user: { login: p.bot ? "x[bot]" : "dev", type: p.bot ? "Bot" : "User" },
+          })),
+        }),
+      );
+    }
+    if (url.pathname === "/search/issues") {
+      queries.push({ kind: "issues", q });
+      const wanted = [...q.matchAll(/repo:(\S+)/g)].map((m) => m[1] ?? "");
+      const items = wanted.flatMap((name) =>
+        (repos[name]?.issues ?? [{ number: 1 }]).map((i) => ({
           number: i.number,
           title: `${name} issue ${String(i.number)}`,
           html_url: `https://github.com/${name}/issues/${String(i.number)}`,
@@ -138,70 +179,85 @@ function world(repos: Record<string, Repo>) {
       );
       return Promise.resolve(json({ items }));
     }
-    const name = /^\/repos\/([^/]+\/[^/]+)$/.exec(parsed.pathname)?.[1];
-    const r = name === undefined ? undefined : repos[name];
-    if (name === undefined || r === undefined) {
-      return Promise.resolve(new Response("", { status: 404 }));
-    }
-    return Promise.resolve(
-      json({
-        full_name: name,
-        stargazers_count: r.stars ?? 3000,
-        archived: r.archived ?? false,
-        fork: r.fork ?? false,
-        license: r.license === null ? null : { spdx_id: r.license ?? "MIT" },
-      }),
-    );
+    return Promise.resolve(new Response("", { status: 404 }));
   });
-  return { fetchFn, calls };
+  return { fetchFn, queries };
 }
 
 const clear = () => Promise.resolve({ blockers: [], warnings: [] });
 
 describe("findIssues", () => {
-  it("keeps only active, licensed, open projects, and says why it dropped the others", async () => {
+  it("drops closed, forked, unlicensed and tiny projects from the one project search, with the reason", async () => {
     const w = world({
       "acme/good": {},
-      "acme/quiet": { prs: [{ assoc: "MEMBER" }] },
-      "acme/closed": { prs: healthy.slice(0, 5), license: null },
       "acme/old": { archived: true },
       "acme/forked": { fork: true },
+      "acme/closed": { license: null },
       "acme/tiny": { stars: 10 },
-      "acme/insiders": { prs: Array.from({ length: 10 }, () => ({ assoc: "MEMBER" })) },
     });
     const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
     expect(r.candidates.map((c) => c.repo.fullName)).toEqual(["acme/good"]);
     const why = Object.fromEntries(r.skipped.map((s) => [s.what, s.reason]));
-    expect(why["acme/quiet"]).toMatch(/merged lately/);
-    expect(why["acme/closed"]).toMatch(/licence/);
     expect(why["acme/old"]).toMatch(/archived/);
     expect(why["acme/forked"]).toMatch(/fork/);
+    expect(why["acme/closed"]).toMatch(/licence/);
     expect(why["acme/tiny"]).toMatch(/stars/);
-    expect(why["acme/insiders"]).toMatch(/outside contributors/);
-    expect(r.repos).toBe(7);
+    expect(r.repos).toBe(5);
+    // Nothing was spent measuring the four that failed the cheap checks.
+    expect(w.queries.filter((x) => x.kind === "prs")).toHaveLength(1);
   });
 
-  it("asks GitHub for open, unassigned starter issues in the language, and PRs merged in the window", async () => {
+  it("asks for projects by stars, activity, state and language, and for PRs merged in the window", async () => {
     const w = world({ "acme/good": {} });
     await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear, language: "python" });
-    const q = (n: number): string => new URL(w.calls[n] ?? "").searchParams.get("q") ?? "";
-    expect(q(0)).toContain('label:"good first issue"');
-    expect(q(0)).toContain("no:assignee");
-    expect(q(0)).toContain("state:open");
-    expect(q(0)).toContain("language:python");
-    expect(q(0)).toContain("updated:>=2026-05-05");
-    const pr = w.calls.map((_, i) => q(i)).find((x) => x.includes("is:pr")) ?? "";
-    expect(pr).toContain("repo:acme/good");
-    expect(pr).toContain("merged:>=2026-10-02");
+    const repos = w.queries.find((x) => x.kind === "repos")?.q ?? "";
+    expect(repos).toContain("good-first-issues:>=3");
+    expect(repos).toContain("stars:>=200");
+    expect(repos).toContain("pushed:>=2026-10-02");
+    expect(repos).toContain("archived:false");
+    expect(repos).toContain("fork:false");
+    expect(repos).toContain("language:python");
+    const prs = w.queries.find((x) => x.kind === "prs")?.q ?? "";
+    expect(prs).toContain("repo:acme/good");
+    expect(prs).toContain("merged:>=2026-10-02");
+    const issues = w.queries.find((x) => x.kind === "issues")?.q ?? "";
+    expect(issues).toContain('label:"good first issue"');
+    expect(issues).toContain("no:assignee");
+    expect(issues).toContain("state:open");
+    expect(issues).toContain("updated:>=2026-05-05");
+    expect(issues).toContain("repo:acme/good");
   });
 
-  it("does not count bots as activity", async () => {
+  it("uses the exact merged total, not the 100 it can see", async () => {
+    const sample = Array.from({ length: 100 }, (_, i) => ({ assoc: i < 50 ? "MEMBER" : "NONE" }));
+    const w = world({ "acme/busy": { prs: sample, total: 400 } });
+    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    expect(r.candidates[0]?.repo).toMatchObject({ merged: 400, externalMerged: 200 });
+  });
+
+  it("drops a quiet project, one that takes no outside work, and bots-only activity", async () => {
     const w = world({
+      "acme/quiet": { prs: [{ assoc: "MEMBER" }] },
+      "acme/insiders": { prs: Array.from({ length: 10 }, () => ({ assoc: "MEMBER" })) },
       "acme/bots": { prs: Array.from({ length: 30 }, () => ({ assoc: "NONE", bot: true })) },
     });
     const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
     expect(r.candidates).toEqual([]);
-    expect(r.skipped[0]?.reason).toMatch(/merged lately/);
+    const why = Object.fromEntries(r.skipped.map((s) => [s.what, s.reason]));
+    expect(why["acme/quiet"]).toMatch(/merged lately/);
+    expect(why["acme/insiders"]).toMatch(/outside contributors/);
+    expect(why["acme/bots"]).toMatch(/merged lately/);
+  });
+
+  it("searches issues only for projects that passed, five to a search", async () => {
+    const names = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [`o/r${String(i)}`, {}]));
+    const w = world({ ...names, "o/quiet": { prs: [] } });
+    await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear, maxRepos: 20 });
+    const issueSearches = w.queries.filter((x) => x.kind === "issues");
+    expect(issueSearches).toHaveLength(2);
+    expect(issueSearches[0]?.q.match(/repo:/g)).toHaveLength(5);
+    expect(issueSearches[1]?.q.match(/repo:/g)).toHaveLength(2);
+    expect(issueSearches.some((x) => x.q.includes("o/quiet"))).toBe(false);
   });
 
   it("ranks by score, keeps at most `perRepo` issues per project, and prefers quiet fresh issues", async () => {
@@ -246,9 +302,7 @@ describe("findIssues", () => {
   });
 
   it("only claim-checks the best issues and does not list the rest as if they were clear", async () => {
-    const w = world({
-      "acme/good": { issues: [{ number: 1 }, { number: 2 }, { number: 3 }] },
-    });
+    const w = world({ "acme/good": { issues: [{ number: 1 }, { number: 2 }, { number: 3 }] } });
     const claim = vi.fn(clear);
     const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim, maxClaims: 1 });
     expect(claim).toHaveBeenCalledTimes(1);
@@ -256,7 +310,7 @@ describe("findIssues", () => {
     expect(r.skipped.filter((s) => s.reason.includes("not claim-checked"))).toHaveLength(2);
   });
 
-  it("measures at most `maxRepos` repositories and says which it left out", async () => {
+  it("measures at most `maxRepos` projects and says which it left out", async () => {
     const w = world({ "a/one": {}, "b/two": {}, "c/three": {} });
     const r = await findIssues({
       fetch: w.fetchFn,
@@ -269,23 +323,31 @@ describe("findIssues", () => {
     expect(r.skipped.find((s) => s.what === "c/three")?.reason).toMatch(/over the limit of 2/);
   });
 
-  it("uses a lower default repository limit without a token, because search is rate limited", async () => {
-    const names = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`o/r${String(i)}`, {}]));
-    const noToken = await findIssues({
-      fetch: world(names).fetchFn,
-      now: NOW,
-      retry: fast,
-      claim: clear,
+  it("stays inside GitHub's search allowance by default: 10 a minute without a token, 30 with one", async () => {
+    const names = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`o/r${String(i)}`, {}]));
+    const calls = async (token?: string): Promise<number> => {
+      const w = world(names);
+      await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear, token });
+      return w.queries.length;
+    };
+    expect(await calls()).toBeLessThanOrEqual(10);
+    expect(await calls("t")).toBeLessThanOrEqual(30);
+    expect(await calls("t")).toBeGreaterThan(await calls());
+  });
+
+  it("says when a project passed but has no open starter issue left", async () => {
+    const w = world({ "acme/empty": { issues: [] } });
+    const fetchFn = vi.fn((input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const q = new URL(url).searchParams.get("q") ?? "";
+      if (url.includes("/search/issues") && !q.includes("is:pr")) {
+        return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+      }
+      return w.fetchFn(input);
     });
-    expect(noToken.skipped.filter((s) => s.reason.includes("over the limit of 8"))).toHaveLength(4);
-    const withToken = await findIssues({
-      fetch: world(names).fetchFn,
-      now: NOW,
-      retry: fast,
-      claim: clear,
-      token: "t",
-    });
-    expect(withToken.skipped.filter((s) => s.reason.includes("repositories"))).toHaveLength(0);
+    const r = await findIssues({ fetch: fetchFn, now: NOW, retry: fast, claim: clear });
+    expect(r.candidates).toEqual([]);
+    expect(r.skipped.find((s) => s.what === "acme/empty")?.reason).toMatch(/no open, unassigned/);
   });
 
   it("raises GitHub's rate-limit error as it is", async () => {
