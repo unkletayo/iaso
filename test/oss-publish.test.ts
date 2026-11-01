@@ -164,12 +164,30 @@ describe("publish", { timeout: 30_000 }, () => {
     expect(git(world.fork, "branch", "--list")).not.toContain("fix/upper");
   });
 
-  it("tells you to sync a fork that is too old to take the commit, and opens nothing", async () => {
+  it("pushes to a fork that lacks the base commit by sending it the history, and changes nothing else there", async () => {
     const { run, calls } = runner({ fork: world.stale });
+    const out = await publish(input(), run);
+    expect(out.prUrl).toBe(PR_URL);
+    // Only our branch is new in the fork; it has the base commit as the parent.
+    expect(git(world.stale, "branch", "--list")).toBe("fix/upper");
+    expect(git(world.stale, "rev-parse", "fix/upper")).toBe(out.commit);
+    expect(git(world.stale, "rev-parse", "fix/upper^")).toBe(world.baseCommit);
+    const pushes = calls.filter((c) => c.args.includes("push"));
+    expect(pushes).toHaveLength(2);
+    expect(calls.some((c) => c.args.includes("--unshallow"))).toBe(true);
+  });
+
+  it("does not fetch the full history when the first push works", async () => {
+    const { run, calls } = runner();
+    await publish(input(), run);
+    expect(calls.some((c) => c.args.includes("--unshallow"))).toBe(false);
+  });
+
+  it("reports a push that fails for another reason without retrying", async () => {
+    const { run, calls } = runner({ fork: join(world.fork, "does-not-exist") });
     const err = await publish(input(), run).catch((e: unknown) => e);
     expect((err as PublishError).step).toBe("push");
-    expect((err as PublishError).message).toContain("gh repo sync ada/widgets");
-    expect(calls.some((c) => c.args.join(" ").startsWith("pr create"))).toBe(false);
+    expect(calls.filter((c) => c.args.includes("push"))).toHaveLength(1);
   });
 
   it("refuses text that still has a [TODO marker, before running anything", async () => {

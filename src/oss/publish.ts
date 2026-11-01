@@ -103,7 +103,12 @@ export async function publish(
   const { upstream } = input;
   const work = await mkdtemp(join(tmpdir(), "iaso-publish-"));
   try {
-    let login = "your-account";
+    let login = "";
+    const failure = (name: string, command: string, r: CmdResult): PublishError =>
+      new PublishError(
+        name,
+        `${name} failed (${command} exit ${String(r.exitCode)}): ${r.stderr.trim().slice(0, STDERR_CHARS)}`,
+      );
     const step = async (
       name: string,
       command: string,
@@ -111,15 +116,7 @@ export async function publish(
       cwd?: string,
     ): Promise<string> => {
       const r = await run(command, args, cwd === undefined ? {} : { cwd });
-      if (r.exitCode !== 0) {
-        const stale = r.stderr.includes("shallow update not allowed")
-          ? ` The fork does not have the commit this change is based on, so it is probably out of date. Sync it (gh repo sync ${login}/${upstream.repo}) and run again.`
-          : "";
-        throw new PublishError(
-          name,
-          `${name} failed (${command} exit ${String(r.exitCode)}): ${r.stderr.trim().slice(0, STDERR_CHARS)}${stale}`,
-        );
-      }
+      if (r.exitCode !== 0) throw failure(name, command, r);
       return r.stdout.trim();
     };
 
@@ -195,21 +192,31 @@ export async function publish(
       );
     }
     log(`pushing ${input.branch} to ${login}/${upstream.repo}`);
-    await step(
+    const pushArgs = [
+      "-c",
+      "credential.helper=",
+      "-c",
+      "credential.helper=!gh auth git-credential",
       "push",
-      "git",
-      [
-        "-c",
-        "credential.helper=",
-        "-c",
-        "credential.helper=!gh auth git-credential",
-        "push",
-        "-q",
-        repoUrl(login, upstream.repo),
-        `${input.branch}:${input.branch}`,
-      ],
-      repoDir,
-    );
+      "-q",
+      repoUrl(login, upstream.repo),
+      `${input.branch}:${input.branch}`,
+    ];
+    let pushed = await run("git", pushArgs, { cwd: repoDir });
+    // The fetch was shallow, and a fork that lacks the base commit (forked long ago, never synced)
+    // refuses a shallow push. Fetch the full history here, in the temp folder: the fork then
+    // receives only the objects it is missing, and nothing of its own is changed.
+    if (pushed.exitCode !== 0 && pushed.stderr.includes("shallow update not allowed")) {
+      log("the fork does not have the base commit; fetching the project's full history to push it");
+      await step(
+        "fetch history",
+        "git",
+        ["fetch", "-q", "--unshallow", repoUrl(upstream.owner, upstream.repo)],
+        repoDir,
+      );
+      pushed = await run("git", pushArgs, { cwd: repoDir });
+    }
+    if (pushed.exitCode !== 0) throw failure("push", "git", pushed);
 
     const bodyPath = join(work, "body.md");
     await writeFile(bodyPath, input.body);
