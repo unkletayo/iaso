@@ -87,6 +87,7 @@ describe.skipIf(!enabled)(
         const sources: Source[] = [];
         const log: string[] = [];
         const deps: CommandDeps = {
+          checkClaim: () => Promise.resolve({ blockers: [], warnings: [] }),
           resolveSource: async (choice) => {
             if (choice.kind !== "github") throw new Error("expected a github source");
             const src = await githubSource(choice.url, {

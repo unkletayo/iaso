@@ -58,6 +58,7 @@ function deps(provider: MockProvider): { deps: CommandDeps; lines: string[] } {
   return {
     lines,
     deps: {
+      checkClaim: () => Promise.resolve({ blockers: [], warnings: [] }),
       resolveSource: defaultResolveSource,
       createProvider: () => provider,
       createSandbox: () => fake.sandbox,
@@ -180,6 +181,7 @@ describe("executeCommand sources", () => {
     extra: Partial<RunCommandOptions> = {},
     files: Record<string, string> = {},
     allowFailure = false,
+    tweak: (deps: CommandDeps) => void = () => undefined,
   ) {
     const w = await workspace();
     await writeFile(join(w.dir, "repo", ".iaso.json"), JSON.stringify({ image: "evil:latest" }));
@@ -203,6 +205,7 @@ describe("executeCommand sources", () => {
         cleanup,
       }),
     );
+    tweak(d.deps);
     const opts = { ...w.opts };
     delete opts.repo;
     delete opts.issue;
@@ -338,6 +341,38 @@ describe("executeCommand sources", () => {
     expect(d.lines.join("\n")).not.toContain("conventions:");
     const id = (await readdir(join(w.dir, "runs")))[0] ?? "";
     await expect(readFile(join(w.dir, "runs", id, "conventions.json"), "utf8")).rejects.toThrow();
+  });
+
+  it("stops before cloning, sandbox or model when the issue is taken, and says why", async () => {
+    const { d, provider, error } = await fromGithub({}, {}, true, (deps) => {
+      deps.checkClaim = () =>
+        Promise.resolve({
+          blockers: ["acme/widgets#7 is assigned to sam."],
+          warnings: ["note one"],
+        });
+    });
+    expect((error as Error).message).toMatch(/looks taken[\s\S]*assigned to sam/);
+    expect(d.deps.resolveSource).not.toHaveBeenCalled();
+    expect(provider.callCount).toBe(0);
+    expect(d.lines.join("\n")).toContain("stop: acme/widgets#7 is assigned to sam.");
+    expect(d.lines.join("\n")).toContain("note: note one");
+  });
+
+  it("shows warnings about an issue and goes on", async () => {
+    const { d, provider } = await fromGithub({}, {}, false, (deps) => {
+      deps.checkClaim = () =>
+        Promise.resolve({ blockers: [], warnings: ["An earlier attempt was closed."] });
+    });
+    expect(d.lines.join("\n")).toContain("note: An earlier attempt was closed.");
+    expect(provider.callCount).toBeGreaterThan(0);
+  });
+
+  it("does not check the claim for a local repo", async () => {
+    const w = await workspace();
+    const d = deps(new MockProvider([submit]));
+    d.deps.checkClaim = vi.fn();
+    await executeCommand("run", { ...w.opts, plan: false }, d.deps);
+    expect(d.deps.checkClaim).not.toHaveBeenCalled();
   });
 
   it("fails before any source or provider work on a bad flag mix", async () => {

@@ -20,11 +20,18 @@ import {
   describeConventions,
   readConventions,
 } from "../oss/conventions.js";
+import {
+  type ClaimReport,
+  IssueClaimedError,
+  checkIssueClaim,
+  claimMessage,
+  describeClaim,
+} from "../oss/claim.js";
 import type { ModelProvider } from "../providers/types.js";
 import { createProvider } from "../providers/registry.js";
 import { DockerSandbox } from "../sandbox/docker.js";
 import type { Sandbox } from "../sandbox/types.js";
-import { githubSource } from "../sources/github.js";
+import { githubSource, parseIssueUrl } from "../sources/github.js";
 import { SourceError, localSource } from "../sources/local.js";
 import type { Source } from "../sources/types.js";
 
@@ -50,6 +57,8 @@ export interface RunCommandOptions {
 
 /** Everything the command touches outside itself, so tests can swap it. */
 export interface CommandDeps {
+  /** Read-only look at whether someone else is already on a GitHub issue. */
+  checkClaim: (issueUrl: string) => Promise<ClaimReport>;
   resolveSource: (o: SourceChoice) => Promise<Source>;
   createProvider: (id: string) => ModelProvider;
   createSandbox: (o: { runId: string; repoPath: string; image?: string }) => Sandbox;
@@ -116,6 +125,7 @@ export function defaultDeps(): CommandDeps {
     console.log(line);
   };
   return {
+    checkClaim: (url) => checkIssueClaim(parseIssueUrl(url), { token: process.env.GITHUB_TOKEN }),
     resolveSource: defaultResolveSource,
     createProvider: (id) => createProvider(id),
     createSandbox: ({ runId, repoPath, image }) =>
@@ -162,6 +172,13 @@ export async function executeCommand(
   const runDir = join(resolve(opts.runs), runId);
   const started = Date.now();
   const review = opts.approvePlan ? deps.review : undefined;
+
+  // Before cloning or spending anything: is someone else already on this issue?
+  if (choice.kind === "github") {
+    const claim = await deps.checkClaim(choice.url);
+    for (const line of describeClaim(claim)) deps.log(line);
+    if (claim.blockers.length > 0) throw new IssueClaimedError(claimMessage(claim), claim);
+  }
 
   deps.log(`run ${runId}: getting the source`);
   const source = await deps.resolveSource(choice);

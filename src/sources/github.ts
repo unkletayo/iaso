@@ -157,7 +157,8 @@ function failure(res: Response, ref: IssueRef, hasToken: boolean): GithubError {
   return new GithubError(`GitHub API error ${String(res.status)} for ${what}.`, res.status);
 }
 
-async function getJson(path: string, ref: IssueRef, o: FetchIssueOptions): Promise<unknown> {
+/** GET a path of the REST API. Retries 5xx and 429; the token goes to api.github.com only. */
+export async function getJson(path: string, ref: IssueRef, o: FetchIssueOptions): Promise<unknown> {
   const doFetch = o.fetch ?? fetch;
   return withRetry(async () => {
     const res = await doFetch(`${API}${path}`, {
