@@ -205,8 +205,8 @@ describe("describeClaim and claimMessage", () => {
   it("prints stops before notes, and the stop message lists only the blockers", () => {
     const report = { blockers: ["it is assigned"], warnings: ["an old PR"] };
     expect(describeClaim(report)).toEqual(["  stop: it is assigned", "  note: an old PR"]);
-    const msg = claimMessage(report);
-    expect(msg).toContain("no clone, sandbox or model call was started");
+    const msg = claimMessage(report, "nothing was sent");
+    expect(msg).toContain("so nothing was sent:");
     expect(msg).toContain("it is assigned");
     expect(msg).not.toContain("an old PR");
   });

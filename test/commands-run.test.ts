@@ -351,7 +351,9 @@ describe("executeCommand sources", () => {
           warnings: ["note one"],
         });
     });
-    expect((error as Error).message).toMatch(/looks taken[\s\S]*assigned to sam/);
+    expect((error as Error).message).toMatch(
+      /looks taken, so no clone, sandbox or model call was started[\s\S]*assigned to sam/,
+    );
     expect(d.deps.resolveSource).not.toHaveBeenCalled();
     expect(provider.callCount).toBe(0);
     expect(d.lines.join("\n")).toContain("stop: acme/widgets#7 is assigned to sam.");

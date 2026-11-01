@@ -204,9 +204,10 @@ export function describeClaim(report: ClaimReport): string[] {
   ];
 }
 
-export function claimMessage(report: ClaimReport): string {
+/** What to tell the person. `consequence` says what did not happen because of the stop. */
+export function claimMessage(report: ClaimReport, consequence: string): string {
   return [
-    "This issue looks taken, so no clone, sandbox or model call was started:",
+    `This issue looks taken, so ${consequence}:`,
     ...report.blockers.map((b) => `  - ${b}`),
     "Maintainers' time is the thing to protect. Pick another issue, or ask on this one first.",
   ].join("\n");

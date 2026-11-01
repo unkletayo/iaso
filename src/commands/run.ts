@@ -177,7 +177,12 @@ export async function executeCommand(
   if (choice.kind === "github") {
     const claim = await deps.checkClaim(choice.url);
     for (const line of describeClaim(claim)) deps.log(line);
-    if (claim.blockers.length > 0) throw new IssueClaimedError(claimMessage(claim), claim);
+    if (claim.blockers.length > 0) {
+      throw new IssueClaimedError(
+        claimMessage(claim, "no clone, sandbox or model call was started"),
+        claim,
+      );
+    }
   }
 
   deps.log(`run ${runId}: getting the source`);

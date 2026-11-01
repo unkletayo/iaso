@@ -14,6 +14,13 @@ import {
   readOssLog,
   recentPrs,
 } from "../oss/limits.js";
+import {
+  type ClaimReport,
+  IssueClaimedError,
+  checkIssueClaim,
+  claimMessage,
+  describeClaim,
+} from "../oss/claim.js";
 import { type PublishInput, type Published, publish, spawnRunner } from "../oss/publish.js";
 import { parseIssueUrl } from "../sources/github.js";
 
@@ -252,6 +259,8 @@ export interface PrCommandDeps {
   now?: () => Date;
   /** Who the commit is by: your git name and your GitHub no-reply address, unless overridden. */
   author: (o: { name?: string; email?: string }) => Promise<Identity>;
+  /** Read-only look at whether someone else is now on the issue. Run again just before sending. */
+  checkClaim: (issueUrl: string) => Promise<ClaimReport>;
   /** Ask a question and return the typed answer; `undefined` when there is no terminal to ask. */
   ask: (question: string) => Promise<string | undefined>;
   publish: (input: PublishInput, log: (line: string) => void) => Promise<Published>;
@@ -308,6 +317,7 @@ export function defaultPrDeps(): PrCommandDeps {
       }
     },
     publish: (input, log) => publish(input, spawnRunner, log),
+    checkClaim: (url) => checkIssueClaim(parseIssueUrl(url), { token: process.env.GITHUB_TOKEN }),
   };
 }
 
@@ -422,6 +432,16 @@ export async function executePr(
   const baseCommit = info.source?.commit;
   if (baseCommit === undefined) {
     throw new PrError("This run did not record the commit it started from, so it cannot be sent.");
+  }
+  // Hours may have passed since the run started: look again before asking for the go-ahead.
+  const claim = await deps.checkClaim(info.source?.issueUrl ?? "");
+  if (claim.blockers.length > 0 || claim.warnings.length > 0) {
+    log("");
+    log("Is anyone else on this issue? (checked just now)");
+    for (const line of describeClaim(claim)) log(line);
+  }
+  if (claim.blockers.length > 0) {
+    throw new IssueClaimedError(claimMessage(claim, "nothing was sent to GitHub"), claim);
   }
   const author = await deps.author({
     ...(opts.name === undefined ? {} : { name: opts.name }),

@@ -17,6 +17,7 @@ import {
 } from "../src/commands/pr.js";
 import { emptyTaskState } from "../src/context/state.js";
 import { appendOssLog, readOssLog } from "../src/oss/limits.js";
+import type { ClaimReport } from "../src/oss/claim.js";
 import type { PublishInput } from "../src/oss/publish.js";
 
 const ISSUE_URL = "https://github.com/acme/widgets/issues/46";
@@ -124,7 +125,15 @@ function deps(
     asked: string[];
     published: PublishInput[];
     publishError?: Error;
-  } = { answer: undefined, asked: [], published: [] };
+    claim: ClaimReport;
+    claimChecked: string[];
+  } = {
+    answer: undefined,
+    asked: [],
+    published: [],
+    claim: { blockers: [], warnings: [] },
+    claimChecked: [],
+  };
   const d: PrCommandDeps = {
     gitIdentity: () => Promise.resolve(identity ?? undefined),
     log: (l) => lines.push(l),
@@ -136,6 +145,10 @@ function deps(
     ask: (q) => {
       state.asked.push(q);
       return Promise.resolve(state.answer);
+    },
+    checkClaim: (url) => {
+      state.claimChecked.push(url);
+      return Promise.resolve(state.claim);
     },
     publish: (input) => {
       state.published.push(input);
@@ -642,6 +655,49 @@ describe("iaso pr --push", () => {
     ).rejects.toThrow(/Not pushing/);
     expect(o.state.asked).toEqual([]);
     expect(o.state.published).toEqual([]);
+  });
+
+  it("looks at the issue again just before asking, and stops if someone has taken it", async () => {
+    const m = await makeRun();
+    await readyDraft(m);
+    const o = deps();
+    o.state.answer = "acme/widgets";
+    o.state.claim = { blockers: ["acme/widgets#46 is assigned to sam."], warnings: [] };
+    await expect(executePr(m.runId, opts(m, { push: true }), o.d)).rejects.toThrow(
+      /looks taken, so nothing was sent to GitHub[\s\S]*assigned to sam/,
+    );
+    expect(o.state.claimChecked).toEqual([ISSUE_URL]);
+    expect(o.state.asked).toEqual([]);
+    expect(o.state.published).toEqual([]);
+    expect(o.text()).toContain("checked just now");
+    expect(await readOssLog(m.runs)).toEqual([]);
+  });
+
+  it("shows claim warnings before the question and still lets you decide", async () => {
+    const m = await makeRun();
+    await readyDraft(m);
+    const o = deps();
+    o.state.answer = "acme/widgets";
+    o.state.claim = { blockers: [], warnings: ['sam wrote: "I\'ll take this"'] };
+    await executePr(m.runId, opts(m, { push: true }), o.d);
+    const text = o.text();
+    expect(text.indexOf("note: sam wrote")).toBeGreaterThan(-1);
+    expect(text.indexOf("note: sam wrote")).toBeLessThan(text.indexOf("About to do this"));
+    expect(o.state.published).toHaveLength(1);
+  });
+
+  it("uses no network for the claim unless it is really about to send", async () => {
+    const m = await makeRun();
+    const dry = deps();
+    await executePr(m.runId, opts(m), dry.d);
+    expect(dry.state.claimChecked).toEqual([]);
+
+    // A marker is left, so it stops on its own list first.
+    const blocked = deps();
+    await expect(executePr(m.runId, opts(m, { push: true }), blocked.d)).rejects.toThrow(
+      /Not pushing/,
+    );
+    expect(blocked.state.claimChecked).toEqual([]);
   });
 
   it("logs nothing when publishing fails, and says so", async () => {
