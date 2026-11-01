@@ -24,7 +24,7 @@ describe("renderModels", () => {
 describe("cli", () => {
   it("registers the planned commands", () => {
     const names = buildProgram().commands.map((c) => c.name());
-    expect(names).toEqual(["run", "plan", "replay", "bench", "pr", "models"]);
+    expect(names).toEqual(["run", "plan", "replay", "bench", "pr", "find", "models"]);
   });
 
   it("prints the model table for `models` and exits 0", async () => {

@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { registerBench } from "./commands/bench.js";
+import { registerFind } from "./commands/find.js";
 import { registerModels } from "./commands/models.js";
 import { registerPr } from "./commands/pr.js";
 import { registerReplay } from "./commands/replay.js";
@@ -20,6 +21,7 @@ export function buildProgram(): Command {
   registerReplay(program);
   registerBench(program);
   registerPr(program);
+  registerFind(program);
   registerModels(program);
   return program;
 }
