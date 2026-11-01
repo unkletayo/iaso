@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import type { Command } from "commander";
 import { z } from "zod";
 import { type RunInfo, runInfoSchema } from "../agent/report.js";
+import { MAX_PRS_PER_REPO_PER_DAY, pushBlockers, readOssLog, recentPrs } from "../oss/limits.js";
 import { parseIssueUrl } from "../sources/github.js";
 
 const run = promisify(execFile);
@@ -234,6 +235,8 @@ export interface PrCommandDeps {
   /** Your git name and email, if set. */
   gitIdentity: () => Promise<Identity | undefined>;
   log: (line: string) => void;
+  /** The current time; tests set it. */
+  now?: () => Date;
 }
 
 export function defaultPrDeps(): PrCommandDeps {
@@ -341,6 +344,20 @@ export async function executePr(
       (todo > 0
         ? `\n${String(todo)} [TODO] marker(s) left. Edit the file and resolve each one.`
         : ""),
+  );
+
+  const repo = `${issue.owner}/${issue.repo}`;
+  const entries = await readOssLog(resolve(opts.runs));
+  const now = (deps.now ?? (() => new Date()))();
+  const blockers = pushBlockers({ repo, todoCount: todo, log: entries, now });
+  log("");
+  log(
+    `Pull requests to ${repo} in the last 24 hours: ${String(recentPrs(entries, repo, now).length)} of ${String(MAX_PRS_PER_REPO_PER_DAY)} allowed.`,
+  );
+  log(
+    blockers.length === 0
+      ? "Nothing in the way of opening the pull request."
+      : ["Not ready to open:", ...blockers.map((b) => `  - ${b}`)].join("\n"),
   );
   log("Nothing was sent to GitHub. Pushing and opening the pull request is not built yet.");
 }

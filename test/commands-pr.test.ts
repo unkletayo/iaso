@@ -16,6 +16,7 @@ import {
   summariseDiff,
 } from "../src/commands/pr.js";
 import { emptyTaskState } from "../src/context/state.js";
+import { appendOssLog } from "../src/oss/limits.js";
 
 const ISSUE_URL = "https://github.com/acme/widgets/issues/46";
 const DIFF =
@@ -368,6 +369,37 @@ describe("iaso pr: the draft", () => {
     expect(
       buildDraft({ ...info, assumptions: [] }, DIFF, conventions, undefined).body,
     ).not.toContain("did not settle");
+  });
+
+  it("says what stands in the way of opening it: markers left, and the daily limit", async () => {
+    const m = await makeRun();
+    const first = deps();
+    await executePr(m.runId, opts(m), first.d);
+    expect(first.text()).toContain("Pull requests to acme/widgets in the last 24 hours: 0 of 2");
+    expect(first.text()).toContain("Not ready to open:");
+    expect(first.text()).toMatch(/\d+ \[TODO\] marker\(s\) are left/);
+
+    // Resolve every marker by hand, as a person would.
+    const path = join(m.dir, "pr-draft.md");
+    const text = (await readFile(path, "utf8")).replace(/\[TODO[^\]]*\]/g, "done");
+    await writeFile(path, text, "utf8");
+    const clear = deps();
+    await executePr(m.runId, opts(m), clear.d);
+    expect(clear.text()).toContain("Nothing in the way of opening the pull request.");
+
+    const now = new Date("2026-11-01T12:00:00Z");
+    for (const n of [1, 2]) {
+      await appendOssLog(m.runs, {
+        at: new Date(now.getTime() - n * 3_600_000).toISOString(),
+        repo: "acme/widgets",
+        runId: `earlier-${String(n)}`,
+        prUrl: `https://github.com/acme/widgets/pull/${String(n)}`,
+      });
+    }
+    const limited = deps();
+    await executePr(m.runId, opts(m), { ...limited.d, now: () => now });
+    expect(limited.text()).toContain("in the last 24 hours: 2 of 2");
+    expect(limited.text()).toContain("already opened 2 pull request(s)");
   });
 
   it("keeps a draft you have edited, and rebuilds it only with --redo", async () => {
