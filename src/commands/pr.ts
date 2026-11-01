@@ -5,13 +5,18 @@ import { promisify } from "node:util";
 import type { Command } from "commander";
 import { z } from "zod";
 import { type RunInfo, runInfoSchema } from "../agent/report.js";
-import { MAX_PRS_PER_REPO_PER_DAY, pushBlockers, readOssLog, recentPrs } from "../oss/limits.js";
+import {
+  MAX_PRS_PER_REPO_PER_DAY,
+  TODO_MARK,
+  pushBlockers,
+  readOssLog,
+  recentPrs,
+} from "../oss/limits.js";
 import { parseIssueUrl } from "../sources/github.js";
 
 const run = promisify(execFile);
 
-/** Anything a person has to confirm or fill in is marked like this. Pushing refuses to go on while one is left. */
-export const TODO_MARK = "[TODO";
+export { TODO_MARK };
 export const hasTodo = (text: string): boolean => text.includes(TODO_MARK);
 
 const SUMMARY_CHARS = 2_000;

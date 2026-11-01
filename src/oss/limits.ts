@@ -2,6 +2,9 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
+/** Anything a person has to confirm or fill in is marked like this. Nothing is sent while one is left. */
+export const TODO_MARK = "[TODO";
+
 /** The most pull requests Iaso will open against one repository in 24 hours. Maintainers are people. */
 export const MAX_PRS_PER_REPO_PER_DAY = 2;
 
