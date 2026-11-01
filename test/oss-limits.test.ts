@@ -38,7 +38,7 @@ describe("recentPrs", () => {
 });
 
 describe("pushBlockers", () => {
-  const base = { repo: "acme/widgets", todoCount: 0, log: [], now: NOW };
+  const base = { repo: "acme/widgets", runId: "this-run", todoCount: 0, log: [], now: NOW };
 
   it("has nothing to say when there is no marker and the limit is not reached", () => {
     expect(pushBlockers(base)).toEqual([]);
@@ -62,6 +62,13 @@ describe("pushBlockers", () => {
     expect(pushBlockers({ ...base, log, now: stillBlocked })).toHaveLength(1);
     const oneFree = new Date(NOW.getTime() + 22 * 3_600_000);
     expect(pushBlockers({ ...base, log, now: oneFree })).toEqual([]);
+  });
+
+  it("blocks a second pull request for the same run, naming the first", () => {
+    const log = [{ ...entry("acme/widgets", hoursAgo(30), 7), runId: "this-run" }];
+    const [msg] = pushBlockers({ ...base, log });
+    expect(msg).toContain("already opened for this run");
+    expect(msg).toContain("pull/7");
   });
 
   it("does not count other repositories against the limit", () => {

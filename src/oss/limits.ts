@@ -60,6 +60,8 @@ export function recentPrs(entries: readonly OssLogEntry[], repo: string, now: Da
 
 export interface PushCheckInput {
   repo: string;
+  /** The run being sent. One run becomes one pull request. */
+  runId: string;
   /** `[TODO` markers still in the draft. */
   todoCount: number;
   log: readonly OssLogEntry[];
@@ -67,8 +69,12 @@ export interface PushCheckInput {
 }
 
 /** Why a pull request may not be opened right now. Empty means nothing stands in the way. */
-export function pushBlockers({ repo, todoCount, log, now }: PushCheckInput): string[] {
+export function pushBlockers({ repo, runId, todoCount, log, now }: PushCheckInput): string[] {
   const blockers: string[] = [];
+  const already = log.find((e) => e.runId === runId);
+  if (already) {
+    blockers.push(`A pull request was already opened for this run: ${already.prUrl}`);
+  }
   if (todoCount > 0) {
     blockers.push(
       `${String(todoCount)} [TODO] marker(s) are left in the draft. Resolve each one: they are things only you can confirm.`,

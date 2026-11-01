@@ -16,7 +16,8 @@ import {
   summariseDiff,
 } from "../src/commands/pr.js";
 import { emptyTaskState } from "../src/context/state.js";
-import { appendOssLog } from "../src/oss/limits.js";
+import { appendOssLog, readOssLog } from "../src/oss/limits.js";
+import type { PublishInput } from "../src/oss/publish.js";
 
 const ISSUE_URL = "https://github.com/acme/widgets/issues/46";
 const DIFF =
@@ -118,14 +119,49 @@ function deps(
   identity: { name: string; email: string } | null = { name: "Ada", email: "ada@example.com" },
 ) {
   const lines: string[] = [];
+  const state: {
+    answer: string | undefined;
+    asked: string[];
+    published: PublishInput[];
+    publishError?: Error;
+  } = { answer: undefined, asked: [], published: [] };
   const d: PrCommandDeps = {
     gitIdentity: () => Promise.resolve(identity ?? undefined),
     log: (l) => lines.push(l),
+    author: (o) =>
+      Promise.resolve({
+        name: o.name ?? "Ada",
+        email: o.email ?? "1+ada@users.noreply.github.com",
+      }),
+    ask: (q) => {
+      state.asked.push(q);
+      return Promise.resolve(state.answer);
+    },
+    publish: (input) => {
+      state.published.push(input);
+      if (state.publishError) return Promise.reject(state.publishError);
+      return Promise.resolve({
+        prUrl: "https://github.com/acme/widgets/pull/9",
+        fork: "ada/widgets",
+        branch: input.branch,
+        commit: "c".repeat(40),
+      });
+    },
   };
-  return { d, lines, text: () => lines.join("\n") };
+  return { d, lines, state, text: () => lines.join("\n") };
 }
 
-const opts = (m: Made, over: Partial<{ title: string; redo: boolean; diff: boolean }> = {}) => ({
+const opts = (
+  m: Made,
+  over: Partial<{
+    title: string;
+    redo: boolean;
+    diff: boolean;
+    push: boolean;
+    name: string;
+    email: string;
+  }> = {},
+) => ({
   runs: m.runs,
   diff: true,
   ...over,
@@ -485,5 +521,136 @@ describe("iaso pr: runs it will not turn into a pull request", () => {
     const err = await executePr("nope", { runs, diff: true }, deps().d).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PrError);
     expect((err as Error).message).toContain("No run.json");
+  });
+});
+
+/** Write the draft, then resolve every marker by hand, as a person would. */
+async function readyDraft(m: Made): Promise<void> {
+  await executePr(m.runId, opts(m), deps().d);
+  const path = join(m.dir, "pr-draft.md");
+  const text = (await readFile(path, "utf8")).replace(/\[TODO[^\]]*\]/g, "done");
+  await writeFile(path, text, "utf8");
+}
+
+describe("iaso pr --push", () => {
+  it("sends nothing without --push, and says how", async () => {
+    const m = await makeRun();
+    await readyDraft(m);
+    const o = deps();
+    await executePr(m.runId, opts(m), o.d);
+    expect(o.text()).toContain("Add --push");
+    expect(o.state.published).toEqual([]);
+    expect(o.state.asked).toEqual([]);
+  });
+
+  it("refuses while a [TODO marker is left, and does not even ask", async () => {
+    const m = await makeRun();
+    const o = deps();
+    await expect(executePr(m.runId, opts(m, { push: true }), o.d)).rejects.toThrow(/Not pushing/);
+    expect(o.state.asked).toEqual([]);
+    expect(o.state.published).toEqual([]);
+  });
+
+  it.each([undefined, "", "yes", "acme", "acme/other"])(
+    "cancels on the answer %j and sends nothing",
+    async (answer) => {
+      const m = await makeRun();
+      await readyDraft(m);
+      const o = deps();
+      o.state.answer = answer;
+      await expect(executePr(m.runId, opts(m, { push: true }), o.d)).rejects.toThrow(
+        /Cancelled|no terminal/,
+      );
+      expect(o.state.asked).toHaveLength(1);
+      expect(o.state.asked[0]).toContain("acme/widgets");
+      expect(o.state.published).toEqual([]);
+      expect(await readOssLog(m.runs)).toEqual([]);
+    },
+  );
+
+  it("shows what will happen, publishes on the typed repository name, and logs the pull request", async () => {
+    const m = await makeRun();
+    await readyDraft(m);
+    const o = deps();
+    o.state.answer = "  ACME/Widgets ";
+    await executePr(m.runId, opts(m, { push: true }), o.d);
+
+    expect(o.text()).toContain("About to do this on GitHub:");
+    expect(o.text()).toContain("DRAFT pull request against acme/widgets");
+    expect(o.text()).toContain("Ada <1+ada@users.noreply.github.com> (with Signed-off-by)");
+    expect(o.text()).toContain(
+      "Opened a draft pull request: https://github.com/acme/widgets/pull/9",
+    );
+
+    expect(o.state.published).toHaveLength(1);
+    const sent = o.state.published[0];
+    expect(sent).toMatchObject({
+      upstream: { owner: "acme", repo: "widgets" },
+      baseCommit: "a".repeat(40),
+      patch: DIFF,
+      signOff: true,
+      identity: { name: "Ada", email: "1+ada@users.noreply.github.com" },
+    });
+    expect(sent?.branch).toBe("iaso/issue-46-ab12");
+    expect(hasTodo((sent?.title ?? "") + (sent?.body ?? ""))).toBe(false);
+
+    expect(await readOssLog(m.runs)).toMatchObject([
+      { repo: "acme/widgets", runId: m.runId, prUrl: "https://github.com/acme/widgets/pull/9" },
+    ]);
+  });
+
+  it("uses the name and email you pass instead of the defaults", async () => {
+    const m = await makeRun();
+    await readyDraft(m);
+    const o = deps();
+    o.state.answer = "acme/widgets";
+    await executePr(m.runId, opts(m, { push: true, name: "Grace", email: "g@example.com" }), o.d);
+    expect(o.state.published[0]?.identity).toEqual({ name: "Grace", email: "g@example.com" });
+  });
+
+  it("opens only one pull request for a run", async () => {
+    const m = await makeRun();
+    await readyDraft(m);
+    const o = deps();
+    o.state.answer = "acme/widgets";
+    await executePr(m.runId, opts(m, { push: true }), o.d);
+    const again = deps();
+    again.state.answer = "acme/widgets";
+    await expect(executePr(m.runId, opts(m, { push: true }), again.d)).rejects.toThrow(
+      /Not pushing/,
+    );
+    expect(again.text()).toContain("already opened for this run");
+    expect(again.state.published).toEqual([]);
+  });
+
+  it("stops at the daily limit", async () => {
+    const m = await makeRun();
+    await readyDraft(m);
+    const now = new Date("2026-11-01T12:00:00Z");
+    for (const n of [1, 2]) {
+      await appendOssLog(m.runs, {
+        at: new Date(now.getTime() - n * 3_600_000).toISOString(),
+        repo: "acme/widgets",
+        runId: `earlier-${String(n)}`,
+        prUrl: `https://github.com/acme/widgets/pull/${String(n)}`,
+      });
+    }
+    const o = deps();
+    o.state.answer = "acme/widgets";
+    await expect(
+      executePr(m.runId, opts(m, { push: true }), { ...o.d, now: () => now }),
+    ).rejects.toThrow(/Not pushing/);
+    expect(o.state.asked).toEqual([]);
+    expect(o.state.published).toEqual([]);
+  });
+
+  it("logs nothing when publishing fails, and says so", async () => {
+    const m = await makeRun();
+    await readyDraft(m);
+    const o = deps();
+    o.state.answer = "acme/widgets";
+    o.state.publishError = new Error("fork failed (gh exit 1): boom");
+    await expect(executePr(m.runId, opts(m, { push: true }), o.d)).rejects.toThrow(/boom/);
+    expect(await readOssLog(m.runs)).toEqual([]);
   });
 });

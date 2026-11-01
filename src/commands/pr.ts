@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { promisify } from "node:util";
 import type { Command } from "commander";
 import { z } from "zod";
@@ -8,10 +9,12 @@ import { type RunInfo, runInfoSchema } from "../agent/report.js";
 import {
   MAX_PRS_PER_REPO_PER_DAY,
   TODO_MARK,
+  appendOssLog,
   pushBlockers,
   readOssLog,
   recentPrs,
 } from "../oss/limits.js";
+import { type PublishInput, type Published, publish, spawnRunner } from "../oss/publish.js";
 import { parseIssueUrl } from "../sources/github.js";
 
 const run = promisify(execFile);
@@ -234,6 +237,11 @@ export interface PrCommandOptions {
   redo?: boolean;
   /** False with `--no-diff`. */
   diff: boolean;
+  /** Fork, push and open a draft pull request, after you type the repository's name. */
+  push?: boolean;
+  /** The commit author, instead of your git name and the GitHub no-reply address. */
+  name?: string;
+  email?: string;
 }
 
 export interface PrCommandDeps {
@@ -242,6 +250,11 @@ export interface PrCommandDeps {
   log: (line: string) => void;
   /** The current time; tests set it. */
   now?: () => Date;
+  /** Who the commit is by: your git name and your GitHub no-reply address, unless overridden. */
+  author: (o: { name?: string; email?: string }) => Promise<Identity>;
+  /** Ask a question and return the typed answer; `undefined` when there is no terminal to ask. */
+  ask: (question: string) => Promise<string | undefined>;
+  publish: (input: PublishInput, log: (line: string) => void) => Promise<Published>;
 }
 
 export function defaultPrDeps(): PrCommandDeps {
@@ -259,6 +272,42 @@ export function defaultPrDeps(): PrCommandDeps {
     log: (line) => {
       console.log(line);
     },
+    author: async (o) => {
+      const config = async (key: string): Promise<string> => {
+        try {
+          return (await run("git", ["config", "--get", key])).stdout.trim();
+        } catch {
+          return "";
+        }
+      };
+      const name = o.name ?? (await config("user.name"));
+      if (name === "") {
+        throw new PrError("No author name. Set `git config --global user.name`, or pass --name.");
+      }
+      if (o.email !== undefined) return { name, email: o.email };
+      try {
+        const who = (
+          await run("gh", ["api", "user", "--jq", '"\\(.id)+\\(.login)"'])
+        ).stdout.trim();
+        if (!/^\d+\+[A-Za-z0-9-]+$/.test(who)) throw new Error(who);
+        return { name, email: `${who}@users.noreply.github.com` };
+      } catch {
+        throw new PrError(
+          "Could not read your GitHub account with `gh api user`. Log in with `gh auth login`, " +
+            "or pass --email.",
+        );
+      }
+    },
+    ask: async (question) => {
+      if (!process.stdin.isTTY) return undefined;
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        return await rl.question(question);
+      } finally {
+        rl.close();
+      }
+    },
+    publish: (input, log) => publish(input, spawnRunner, log),
   };
 }
 
@@ -354,7 +403,7 @@ export async function executePr(
   const repo = `${issue.owner}/${issue.repo}`;
   const entries = await readOssLog(resolve(opts.runs));
   const now = (deps.now ?? (() => new Date()))();
-  const blockers = pushBlockers({ repo, todoCount: todo, log: entries, now });
+  const blockers = pushBlockers({ repo, runId, todoCount: todo, log: entries, now });
   log("");
   log(
     `Pull requests to ${repo} in the last 24 hours: ${String(recentPrs(entries, repo, now).length)} of ${String(MAX_PRS_PER_REPO_PER_DAY)} allowed.`,
@@ -364,18 +413,91 @@ export async function executePr(
       ? "Nothing in the way of opening the pull request."
       : ["Not ready to open:", ...blockers.map((b) => `  - ${b}`)].join("\n"),
   );
-  log("Nothing was sent to GitHub. Pushing and opening the pull request is not built yet.");
+  if (!opts.push) {
+    log("Nothing was sent to GitHub. Add --push to fork, push and open a draft pull request.");
+    return;
+  }
+
+  if (blockers.length > 0) throw new PrError("Not pushing: see the list above. Nothing was sent.");
+  const baseCommit = info.source?.commit;
+  if (baseCommit === undefined) {
+    throw new PrError("This run did not record the commit it started from, so it cannot be sent.");
+  }
+  const author = await deps.author({
+    ...(opts.name === undefined ? {} : { name: opts.name }),
+    ...(opts.email === undefined ? {} : { email: opts.email }),
+  });
+  const branch = `iaso/issue-${String(issue.number)}-${(runId.split("-").pop() ?? runId).replace(/[^A-Za-z0-9._-]/g, "-")}`;
+  const signOff = conventions?.dco === true;
+  log("");
+  log("About to do this on GitHub:");
+  log(`  1. Fork ${repo} to your account (or reuse your fork).`);
+  log(
+    `  2. Push branch ${branch} to your fork: ${String(draft.files.length)} file(s), one commit.`,
+  );
+  log(`  3. Open a DRAFT pull request against ${repo}: "${shown.title}"`);
+  log(`  Commit author: ${author.name} <${author.email}>${signOff ? " (with Signed-off-by)" : ""}`);
+  const answer = await deps.ask(`Type ${repo} to go ahead, or anything else to cancel: `);
+  if (answer === undefined) {
+    throw new PrError(
+      "Sending needs you to type the repository name, and there is no terminal to ask in. " +
+        "Nothing was sent.",
+    );
+  }
+  if (answer.trim().toLowerCase() !== repo.toLowerCase()) {
+    throw new PrError("Cancelled. Nothing was sent to GitHub.");
+  }
+
+  const done = await deps.publish(
+    {
+      upstream: { owner: issue.owner, repo: issue.repo },
+      baseCommit,
+      patch: diff,
+      branch,
+      title: shown.title,
+      body: shown.body,
+      identity: author,
+      signOff,
+    },
+    log,
+  );
+  try {
+    await appendOssLog(resolve(opts.runs), {
+      at: now.toISOString(),
+      repo,
+      runId,
+      prUrl: done.prUrl,
+    });
+  } catch (err) {
+    log(
+      `Warning: the pull request is open, but it could not be written to the log, so the daily ` +
+        `limit will not count it: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  log("");
+  log(`Opened a draft pull request: ${done.prUrl}`);
+  log(
+    `Branch ${done.branch} is on ${done.fork}. Review it on GitHub, then mark it ready yourself.`,
+  );
 }
 
 export function registerPr(program: Command, deps: () => PrCommandDeps = defaultPrDeps): void {
   program
     .command("pr")
-    .description("Draft a pull request from a finished run (changes nothing on GitHub)")
+    .description(
+      "Draft a pull request from a finished run. Changes nothing on GitHub unless you add --push",
+    )
     .argument("<runId>", "run folder name under --runs")
     .option("--runs <dir>", "where run folders are", "runs")
     .option("--title <text>", "use this title instead of one made from the issue")
     .option("--redo", "build the draft again, replacing pr-draft.md")
     .option("--no-diff", "do not print the full diff")
+    .option(
+      "--push",
+      "fork, push and open a DRAFT pull request, after you type the repository name",
+    )
+    .option("--name <name>", "commit author name (default: your git user.name)")
+    .option("--email <email>", "commit author email (default: your GitHub no-reply address)")
     .action(async (runId: string, opts: PrCommandOptions) => {
       await executePr(runId, opts, deps());
     });
