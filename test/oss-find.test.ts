@@ -6,8 +6,12 @@ import {
   WEIGHTS,
   countMerged,
   findIssues,
+  isBugLabelled,
+  isCopyleft,
+  issueVerdict,
   repoVerdict,
   scoreIssue,
+  titleShape,
 } from "../src/oss/find.js";
 import { GithubError } from "../src/sources/github.js";
 
@@ -85,13 +89,20 @@ describe("repoVerdict", () => {
 });
 
 describe("scoreIssue", () => {
-  const fresh = { comments: 0, updatedAt: daysAgo(1) };
+  const fresh = { comments: 0, updatedAt: daysAgo(1), labels: ["bug"] };
 
-  it("stays within 100 and reaches it only for a perfect project and issue", () => {
+  it("stays within 100 and reaches it only for a perfect project and a bug issue", () => {
     const best = scoreIssue(stats({ merged: 80, externalMerged: 40, stars: 100000 }), fresh, NOW);
     expect(best.score).toBeLessThanOrEqual(100);
     expect(best.score).toBeGreaterThanOrEqual(98);
     expect(Object.values(WEIGHTS).reduce((a, b) => a + b, 0)).toBe(100);
+  });
+
+  it("gives a bug label a fifth of the score, and nothing otherwise", () => {
+    const withBug = scoreIssue(stats(), fresh, NOW).score;
+    const without = scoreIssue(stats(), { ...fresh, labels: ["enhancement"] }, NOW).score;
+    expect(withBug - without).toBe(WEIGHTS.bug);
+    expect(scoreIssue(stats(), { comments: 0, updatedAt: daysAgo(1) }, NOW).score).toBe(without);
   });
 
   it("prefers a busier project, more outside merges, fewer comments and a fresher issue", () => {
@@ -104,11 +115,68 @@ describe("scoreIssue", () => {
     );
   });
 
-  it("explains itself in plain words", () => {
-    const { reasons } = scoreIssue(stats(), { comments: 3, updatedAt: daysAgo(4) }, NOW);
+  it("explains itself in plain words, including the bug label and a copyleft licence", () => {
+    const { reasons } = scoreIssue(
+      stats(),
+      { comments: 3, updatedAt: daysAgo(4), labels: [] },
+      NOW,
+    );
     expect(reasons.join("\n")).toContain("20 pull requests merged");
+    expect(reasons.join("\n")).toContain("not labelled as a bug");
     expect(reasons.join("\n")).toContain("4 day(s) ago, 3 comment(s)");
     expect(reasons.join("\n")).toContain("licence MIT");
+    expect(reasons.join("\n")).not.toContain("copyleft");
+    const agpl = scoreIssue(stats({ license: "AGPL-3.0" }), fresh, NOW).reasons.join("\n");
+    expect(agpl).toContain("labelled as a bug");
+    expect(agpl).toContain("copyleft: your change must be released under the same terms");
+  });
+});
+
+describe("what kind of issue it is", () => {
+  it("recognises bug labels, not words that contain them", () => {
+    for (const l of ["bug", "type: bug", "kind/bug", "regression", "crash", "defect"]) {
+      expect(isBugLabelled([l]), l).toBe(true);
+    }
+    for (const l of ["enhancement", "debug", "good first issue", "documentation"]) {
+      expect(isBugLabelled([l]), l).toBe(false);
+    }
+  });
+
+  it("refuses hacktoberfest chores and 'Add new ...' data entry, and nothing else", () => {
+    expect(issueVerdict({ title: "Fix it", labels: ["hacktoberfest"] })).toMatch(/hacktoberfest/);
+    expect(issueVerdict({ title: "Fix it", labels: ["hacktoberfest-accepted"] })).toMatch(
+      /hacktoberfest/,
+    );
+    for (const t of [
+      "Add new Anime Quote 967",
+      "🎌 Add new Dialect Entry 721",
+      "add a new Japanese idiom",
+      "Create new theme",
+    ]) {
+      expect(issueVerdict({ title: t, labels: [] }), t).toMatch(/data-entry/);
+    }
+    for (const t of [
+      "Add support for X",
+      "Crash when adding new items",
+      "Newsletter signup fails",
+      "Database port exposed",
+    ]) {
+      expect(issueVerdict({ title: t, labels: ["bug"] }), t).toBeUndefined();
+    }
+  });
+
+  it("gives titles that differ only in numbers the same shape", () => {
+    expect(titleShape("Fix  Quote 967")).toBe(titleShape("fix quote 12"));
+    expect(titleShape("Fix quote 967")).not.toBe(titleShape("Fix idiom 967"));
+  });
+
+  it("spots copyleft licences, and not permissive ones", () => {
+    for (const l of ["GPL-3.0", "AGPL-3.0", "LGPL-2.1", "MPL-2.0", "EUPL-1.2", "CC-BY-SA-4.0"]) {
+      expect(isCopyleft(l), l).toBe(true);
+    }
+    for (const l of ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unlicense", null]) {
+      expect(isCopyleft(l), String(l)).toBe(false);
+    }
   });
 });
 
@@ -121,7 +189,7 @@ interface Repo {
   prs?: { assoc: string; bot?: boolean }[];
   /** The exact number GitHub reports, when it is more than the sample. */
   total?: number;
-  issues?: { number: number; comments?: number; age?: number }[];
+  issues?: { number: number; comments?: number; age?: number; title?: string; labels?: string[] }[];
 }
 
 const healthy: { assoc: string; bot?: boolean }[] = [
@@ -170,7 +238,8 @@ function world(repos: Record<string, Repo>) {
       const items = wanted.flatMap((name) =>
         (repos[name]?.issues ?? [{ number: 1 }]).map((i) => ({
           number: i.number,
-          title: `${name} issue ${String(i.number)}`,
+          title: i.title ?? `Problem ${String.fromCharCode(96 + i.number)} in ${name}`,
+          labels: (i.labels ?? []).map((name) => ({ name })),
           html_url: `https://github.com/${name}/issues/${String(i.number)}`,
           repository_url: `https://api.github.com/repos/${name}`,
           comments: i.comments ?? 1,
@@ -281,6 +350,61 @@ describe("findIssues", () => {
     expect(r.candidates.map((c) => c.number)).toEqual([2, 3, 4]);
     const scores = r.candidates.map((c) => c.score);
     expect(scores).toEqual([...scores].sort((a, b) => b - a));
+  });
+
+  it("leaves out hacktoberfest chores and 'Add new ...' requests, with the reason", async () => {
+    const w = world({
+      "acme/good": {
+        issues: [
+          { number: 1, title: "Crash on empty input", labels: ["bug"] },
+          { number: 2, title: "Add new Anime Quote 967", labels: ["good first issue"] },
+          { number: 3, title: "Fix typo", labels: ["hacktoberfest"] },
+        ],
+      },
+    });
+    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    expect(r.candidates.map((c) => c.number)).toEqual([1]);
+    const why = Object.fromEntries(r.skipped.map((s) => [s.what, s.reason]));
+    expect(why["https://github.com/acme/good/issues/2"]).toMatch(/data-entry/);
+    expect(why["https://github.com/acme/good/issues/3"]).toMatch(/hacktoberfest/);
+  });
+
+  it("puts a bug above a feature request of equal standing", async () => {
+    const w = world({
+      "acme/good": {
+        issues: [
+          { number: 1, title: "Support dark mode", labels: ["enhancement"] },
+          { number: 2, title: "Login fails on Safari", labels: ["bug"] },
+        ],
+      },
+    });
+    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    expect(r.candidates.map((c) => c.number)).toEqual([2, 1]);
+    expect(r.candidates[0]?.score).toBeGreaterThan((r.candidates[1]?.score ?? 0) + 15);
+  });
+
+  it("keeps one issue per title pattern and says how many it folded", async () => {
+    const w = world({
+      "acme/good": {
+        issues: [
+          { number: 1, title: "Update locale file 12", labels: ["bug"] },
+          { number: 2, title: "Update locale file 13", labels: ["bug"], comments: 3 },
+          { number: 3, title: "Update locale file 14", labels: ["bug"], comments: 5 },
+          { number: 4, title: "Crash on save", labels: ["bug"] },
+        ],
+      },
+    });
+    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    expect(r.candidates.map((c) => c.number).sort()).toEqual([1, 4]);
+    const folded = r.skipped.find((s) => s.what === "acme/good");
+    expect(folded?.reason).toMatch(/^2 more issue\(s\) with the same title pattern as .*issues\/1/);
+  });
+
+  it("marks a copyleft project's issues so they are not missed", async () => {
+    const w = world({ "acme/agpl": { license: "AGPL-3.0" }, "acme/mit": { license: "MIT" } });
+    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    const by = Object.fromEntries(r.candidates.map((c) => [c.repo.fullName, c.copyleft]));
+    expect(by).toEqual({ "acme/agpl": true, "acme/mit": false });
   });
 
   it("drops an issue someone has taken, keeps warnings, and names the reason", async () => {

@@ -20,6 +20,7 @@ const candidate = (n: number, over: Partial<Candidate> = {}): Candidate => ({
   score: 80 - n,
   reasons: ["20 pull requests merged", "2000 stars"],
   claim: { blockers: [], warnings: [] },
+  copyleft: false,
   ...over,
 });
 
@@ -65,6 +66,12 @@ describe("renderFind", () => {
     expect(text).toContain("20 pull requests merged; 2000 stars");
     expect(text).toContain("    note: an old PR");
     expect(text).toContain("Looked at 9 issue(s) in 4 project(s); 1 passed, 1 dropped.");
+  });
+
+  it("marks an issue in a copyleft project next to its score", () => {
+    const text = renderFind(result({ candidates: [candidate(1, { copyleft: true })] }), base);
+    expect(text).toContain("score 79 [copyleft licence]  https://github.com/acme/widgets/issues/1");
+    expect(renderFind(result(), base)).not.toContain("copyleft");
   });
 
   it("shows only `limit` issues and says so", () => {

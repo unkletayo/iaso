@@ -10,7 +10,14 @@ export const MIN_MERGED = 5;
 export const MIN_EXTERNAL_MERGED = 2;
 
 /** Weights of the score, out of 100. Written down so a ranking can be explained and argued with. */
-export const WEIGHTS = { activity: 40, outside: 30, fresh: 10, quiet: 10, stars: 10 } as const;
+export const WEIGHTS = {
+  activity: 30,
+  outside: 20,
+  bug: 20,
+  fresh: 10,
+  quiet: 10,
+  stars: 10,
+} as const;
 
 export interface FindOptions extends FetchIssueOptions {
   /** `typescript`, `python`... Without it, any language. */
@@ -50,6 +57,8 @@ export interface Candidate {
   /** Plain-language reasons behind the score. */
   reasons: string[];
   claim: ClaimReport;
+  /** The licence asks that your change be released under the same terms (GPL, AGPL, MPL...). */
+  copyleft: boolean;
 }
 
 export interface Skipped {
@@ -74,6 +83,7 @@ const issueItem = z.object({
   repository_url: z.string(),
   comments: z.number().default(0),
   updated_at: z.string(),
+  labels: z.array(z.union([z.string(), z.object({ name: z.string() })])).default([]),
   assignee: z.unknown().optional(),
   pull_request: z.unknown().optional(),
 });
@@ -132,24 +142,59 @@ export function repoVerdict(r: RepoStats, minStars: number): string | undefined 
 
 const clamp01 = (n: number): number => Math.max(0, Math.min(1, n));
 
+const labelNames = (labels: z.infer<typeof issueItem>["labels"]): string[] =>
+  labels.map((l) => (typeof l === "string" ? l : l.name).toLowerCase());
+
+/** Iaso fixes bugs, so a label that says "bug" is the signal that the work is its kind of work. */
+export const isBugLabelled = (labels: readonly string[]): boolean =>
+  labels.some((l) => /\b(bug|defect|regression|crash)\b/.test(l));
+
+/** A licence that asks for changes to be shared under the same terms. */
+export const isCopyleft = (license: string | null): boolean =>
+  license !== null && /^(A?GPL|LGPL|MPL|EUPL|OSL|CPL|EPL|SSPL|CC-BY-SA)/i.test(license);
+
+/**
+ * Why an issue is not the kind Iaso should take, or `undefined`. Hacktoberfest tasks and "Add new
+ * <entry>" requests are data entry, which a bug-fixing agent has no business doing.
+ */
+export function issueVerdict(issue: {
+  title: string;
+  labels: readonly string[];
+}): string | undefined {
+  if (issue.labels.some((l) => l.includes("hacktoberfest"))) {
+    return "labelled hacktoberfest: a chore, not a bug";
+  }
+  if (/^\s*(?:\W+\s*)?(?:add|create)\s+(?:an?\s+)?new\b/i.test(issue.title)) {
+    return 'titled "Add new ...": a data-entry request, not a bug';
+  }
+  return undefined;
+}
+
+/** Two titles that differ only in numbers are the same template ("Add new Anime Quote 967"). */
+export const titleShape = (title: string): string =>
+  title.toLowerCase().replace(/\d+/g, "#").replace(/\s+/g, " ").trim();
+
 /** Score one issue of a repository that passed `repoVerdict`, 0 to 100, with the reasons. */
 export function scoreIssue(
   repo: RepoStats,
-  issue: { comments: number; updatedAt: string },
+  issue: { comments: number; updatedAt: string; labels?: readonly string[] },
   now: Date,
 ): { score: number; reasons: string[] } {
   const age = Math.max(0, Math.floor((now.getTime() - Date.parse(issue.updatedAt)) / DAY_MS));
+  const bug = isBugLabelled(issue.labels ?? []);
   const activity = clamp01(repo.merged / 40) * WEIGHTS.activity;
   const outside = clamp01(repo.externalMerged / 20) * WEIGHTS.outside;
+  const bugPoints = bug ? WEIGHTS.bug : 0;
   const fresh = clamp01(1 - age / 180) * WEIGHTS.fresh;
   const quiet = clamp01(1 - issue.comments / 10) * WEIGHTS.quiet;
   const stars = clamp01(Math.log10(Math.max(1, repo.stars)) / 4) * WEIGHTS.stars;
   return {
-    score: Math.round(activity + outside + fresh + quiet + stars),
+    score: Math.round(activity + outside + bugPoints + fresh + quiet + stars),
     reasons: [
       `${String(repo.merged)} pull requests merged in the window, ${String(repo.externalMerged)} from outside contributors`,
+      bug ? "labelled as a bug" : "not labelled as a bug",
       `issue last touched ${String(age)} day(s) ago, ${String(issue.comments)} comment(s)`,
-      `${String(repo.stars)} stars, licence ${repo.license ?? "unknown"}`,
+      `${String(repo.stars)} stars, licence ${repo.license ?? "unknown"}${isCopyleft(repo.license) ? " (copyleft: your change must be released under the same terms)" : ""}`,
     ],
   };
 }
@@ -286,14 +331,38 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
 
   const scored: Candidate[] = [];
   for (const repo of qualified) {
-    const issues = byRepo.get(repo.fullName.toLowerCase()) ?? [];
-    const best = issues
-      .map((i) => ({
+    const taken: { i: z.infer<typeof issueItem>; labels: string[] }[] = [];
+    for (const i of byRepo.get(repo.fullName.toLowerCase()) ?? []) {
+      const labels = labelNames(i.labels);
+      const why = issueVerdict({ title: i.title, labels });
+      if (why === undefined) taken.push({ i, labels });
+      else skipped.push({ what: i.html_url, reason: why });
+    }
+    const ranked = taken
+      .map(({ i, labels }) => ({
         i,
-        ...scoreIssue(repo, { comments: i.comments, updatedAt: i.updated_at }, now),
+        ...scoreIssue(repo, { comments: i.comments, updatedAt: i.updated_at, labels }, now),
       }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, perRepo);
+      .sort((a, b) => b.score - a.score);
+    // One issue per template, and at most `perRepo` in all.
+    const seen = new Map<string, string>();
+    const best: typeof ranked = [];
+    let repeats = 0;
+    for (const r of ranked) {
+      const shape = titleShape(r.i.title);
+      if (seen.has(shape)) {
+        repeats += 1;
+        continue;
+      }
+      seen.set(shape, r.i.html_url);
+      if (best.length < perRepo) best.push(r);
+    }
+    if (repeats > 0) {
+      skipped.push({
+        what: repo.fullName,
+        reason: `${String(repeats)} more issue(s) with the same title pattern as ${[...seen.values()][0] ?? "another"}: one per pattern is enough`,
+      });
+    }
     for (const { i, score, reasons } of best) {
       scored.push({
         url: i.html_url,
@@ -305,6 +374,7 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
         score,
         reasons,
         claim: { blockers: [], warnings: [] },
+        copyleft: isCopyleft(repo.license),
       });
     }
   }

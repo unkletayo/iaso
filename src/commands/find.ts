@@ -42,7 +42,7 @@ export function renderFind(
   }
   shown.forEach((c, i) => {
     lines.push(
-      `${String(i + 1).padStart(2)}. score ${String(c.score)}  ${c.url}`,
+      `${String(i + 1).padStart(2)}. score ${String(c.score)}${c.copyleft ? " [copyleft licence]" : ""}  ${c.url}`,
       `    ${c.title}`,
       `    ${c.reasons.join("; ")}`,
       ...c.claim.warnings.map((w) => `    note: ${w}`),
