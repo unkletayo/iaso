@@ -49,6 +49,7 @@ function deps(r: FindResult = result(), token: string | undefined = "t") {
       return Promise.resolve(r);
     },
     log: (l) => lines.push(l),
+    progress: () => undefined,
     token,
   };
   return { d, lines, seen, text: () => lines.join("\n") };
@@ -117,15 +118,28 @@ describe("executeFind", () => {
   it("passes the options and the token to the search", async () => {
     const d = deps();
     await executeFind(opts({ language: "python", minStars: 500, maxRepos: 5, window: 14 }), d.d);
-    expect(d.seen).toEqual([
-      { token: "t", minStars: 500, windowDays: 14, language: "python", maxRepos: 5 },
+    expect(typeof d.seen[0]?.progress).toBe("function");
+    expect(d.seen.map((o) => ({ ...o, progress: undefined }))).toEqual([
+      {
+        token: "t",
+        minStars: 500,
+        windowDays: 14,
+        language: "python",
+        maxRepos: 5,
+      },
     ]);
   });
 
   it("leaves unset options out", async () => {
     const d = deps();
     await executeFind(opts(), d.d);
-    expect(d.seen[0]).toEqual({ token: "t", minStars: 200, windowDays: 30 });
+    expect(typeof d.seen[0]?.progress).toBe("function");
+    expect({ ...d.seen[0], progress: undefined }).toEqual({
+      token: "t",
+      progress: undefined,
+      minStars: 200,
+      windowDays: 30,
+    });
   });
 
   it("prints JSON, cut to the limit, with --json", async () => {
@@ -168,8 +182,9 @@ describe("iaso find options", () => {
       "7",
     ]);
     await p.run();
-    expect(p.d.seen[0]).toEqual({
+    expect({ ...p.d.seen[0], progress: undefined }).toEqual({
       token: "t",
+      progress: undefined,
       minStars: 800,
       windowDays: 7,
       language: "typescript",

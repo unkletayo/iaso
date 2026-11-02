@@ -180,6 +180,13 @@ describe("fetchIssue", () => {
       /secondary rate limit.*Wait 45 seconds/,
     );
     expect(byHeader).toHaveBeenCalledTimes(1);
+    const noWait = fakeFetch({
+      "/issues/7": () =>
+        new Response(JSON.stringify({ message: "secondary rate limit" }), { status: 403 }),
+    });
+    await expect(fetchIssue(ref, { fetch: noWait, retry: fast })).rejects.toThrow(
+      /too fast\)\. Wait a minute, then run again\.$/,
+    );
     const byWords = fakeFetch({
       "/issues/7": () =>
         new Response(JSON.stringify({ message: "You have exceeded a secondary rate limit." }), {

@@ -17,6 +17,8 @@ export interface FindCommandOptions {
 export interface FindCommandDeps {
   find: (o: FindOptions) => Promise<FindResult>;
   log: (line: string) => void;
+  /** Progress while it works; the result goes to `log`. */
+  progress: (line: string) => void;
   token: string | undefined;
 }
 
@@ -25,6 +27,10 @@ export function defaultFindDeps(): FindCommandDeps {
     find: findIssues,
     log: (line) => {
       console.log(line);
+    },
+    // On stderr, so `--json` output stays clean.
+    progress: (line) => {
+      console.error(line);
     },
     token: process.env.GITHUB_TOKEN,
   };
@@ -78,6 +84,7 @@ export function renderFind(
 export async function executeFind(opts: FindCommandOptions, deps: FindCommandDeps): Promise<void> {
   const result = await deps.find({
     token: deps.token,
+    progress: deps.progress,
     minStars: opts.minStars,
     windowDays: opts.window,
     ...(opts.language === undefined ? {} : { language: opts.language }),

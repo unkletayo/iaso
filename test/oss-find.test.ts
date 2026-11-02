@@ -19,6 +19,7 @@ import { GithubError } from "../src/sources/github.js";
 const NOW = new Date("2026-11-01T12:00:00Z");
 const daysAgo = (d: number): string => new Date(NOW.getTime() - d * 86_400_000).toISOString();
 const fast = { sleep: () => Promise.resolve(), random: () => 0.5 };
+const noWait = (): Promise<void> => Promise.resolve();
 
 const stats = (over: Partial<RepoStats> = {}): RepoStats => ({
   fullName: "acme/widgets",
@@ -280,7 +281,13 @@ describe("findIssues", () => {
       "acme/closed": { license: null },
       "acme/tiny": { stars: 10 },
     });
-    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
     expect(r.candidates.map((c) => c.repo.fullName)).toEqual(["acme/good"]);
     const why = Object.fromEntries(r.skipped.map((s) => [s.what, s.reason]));
     expect(why["acme/old"]).toMatch(/archived/);
@@ -294,7 +301,14 @@ describe("findIssues", () => {
 
   it("asks for projects by stars, activity, state and language, and for PRs merged in the window", async () => {
     const w = world({ "acme/good": {} });
-    await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear, language: "python" });
+    await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+      language: "python",
+    });
     const repos = w.queries.find((x) => x.kind === "repos")?.q ?? "";
     expect(repos).toContain("good-first-issues:>=3");
     expect(repos).toContain("stars:>=200");
@@ -316,7 +330,13 @@ describe("findIssues", () => {
   it("uses the exact merged total, not the 100 it can see", async () => {
     const sample = Array.from({ length: 100 }, (_, i) => ({ assoc: i < 50 ? "MEMBER" : "NONE" }));
     const w = world({ "acme/busy": { prs: sample, total: 400 } });
-    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
     expect(r.candidates[0]?.repo).toMatchObject({ merged: 400, externalMerged: 200 });
   });
 
@@ -326,7 +346,13 @@ describe("findIssues", () => {
       "acme/insiders": { prs: Array.from({ length: 10 }, () => ({ assoc: "MEMBER" })) },
       "acme/bots": { prs: Array.from({ length: 30 }, () => ({ assoc: "NONE", bot: true })) },
     });
-    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
     expect(r.candidates).toEqual([]);
     const why = Object.fromEntries(r.skipped.map((s) => [s.what, s.reason]));
     expect(why["acme/quiet"]).toMatch(/merged lately/);
@@ -337,7 +363,14 @@ describe("findIssues", () => {
   it("searches issues only for projects that passed, five to a search", async () => {
     const names = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [`o/r${String(i)}`, {}]));
     const w = world({ ...names, "o/quiet": { prs: [] } });
-    await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear, maxRepos: 20 });
+    await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+      maxRepos: 20,
+    });
     const issueSearches = w.queries.filter((x) => x.kind === "issues");
     expect(issueSearches).toHaveLength(2);
     expect(issueSearches[0]?.q.match(/repo:/g)).toHaveLength(5);
@@ -360,6 +393,7 @@ describe("findIssues", () => {
       fetch: w.fetchFn,
       now: NOW,
       retry: fast,
+      sleep: noWait,
       claim: clear,
       perRepo: 3,
     });
@@ -378,7 +412,13 @@ describe("findIssues", () => {
         ],
       },
     });
-    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
     expect(r.candidates.map((c) => c.number)).toEqual([1]);
     const why = Object.fromEntries(r.skipped.map((s) => [s.what, s.reason]));
     expect(why["https://github.com/acme/good/issues/2"]).toMatch(/data-entry/);
@@ -394,7 +434,13 @@ describe("findIssues", () => {
         ],
       },
     });
-    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
     expect(r.candidates.map((c) => c.number)).toEqual([2, 1]);
     expect(r.candidates[0]?.score).toBeGreaterThan((r.candidates[1]?.score ?? 0) + 15);
   });
@@ -410,7 +456,13 @@ describe("findIssues", () => {
         ],
       },
     });
-    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
     expect(r.candidates.map((c) => c.number).sort()).toEqual([1, 4]);
     const folded = r.skipped.find((s) => s.what === "acme/good");
     expect(folded?.reason).toMatch(/^2 more issue\(s\) with the same title pattern as .*issues\/1/);
@@ -418,7 +470,13 @@ describe("findIssues", () => {
 
   it("keeps a project with an unclassified licence, flagged, and drops one with no licence file", async () => {
     const w = world({ "acme/other": { license: "NOASSERTION" }, "acme/none": { license: null } });
-    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
     expect(r.candidates.map((c) => [c.repo.fullName, c.licenseUnclear])).toEqual([
       ["acme/other", true],
     ]);
@@ -427,7 +485,13 @@ describe("findIssues", () => {
 
   it("marks a copyleft project's issues so they are not missed", async () => {
     const w = world({ "acme/agpl": { license: "AGPL-3.0" }, "acme/mit": { license: "MIT" } });
-    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
     const by = Object.fromEntries(r.candidates.map((c) => [c.repo.fullName, c.copyleft]));
     expect(by).toEqual({ "acme/agpl": true, "acme/mit": false });
   });
@@ -441,7 +505,7 @@ describe("findIssues", () => {
           : { blockers: [], warnings: ["an old PR"] },
       ),
     );
-    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim });
+    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, sleep: noWait, claim });
     expect(r.candidates.map((c) => c.number)).toEqual([2]);
     expect(r.candidates[0]?.claim.warnings).toEqual(["an old PR"]);
     expect(r.skipped.find((s) => s.what.endsWith("/issues/1"))?.reason).toContain(
@@ -453,7 +517,14 @@ describe("findIssues", () => {
   it("only claim-checks the best issues and does not list the rest as if they were clear", async () => {
     const w = world({ "acme/good": { issues: [{ number: 1 }, { number: 2 }, { number: 3 }] } });
     const claim = vi.fn(clear);
-    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim, maxClaims: 1 });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim,
+      maxClaims: 1,
+    });
     expect(claim).toHaveBeenCalledTimes(1);
     expect(r.candidates).toHaveLength(1);
     expect(r.skipped.filter((s) => s.reason.includes("not claim-checked"))).toHaveLength(2);
@@ -465,6 +536,7 @@ describe("findIssues", () => {
       fetch: w.fetchFn,
       now: NOW,
       retry: fast,
+      sleep: noWait,
       claim: clear,
       maxRepos: 2,
     });
@@ -476,7 +548,14 @@ describe("findIssues", () => {
     const names = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`o/r${String(i)}`, {}]));
     const calls = async (token?: string): Promise<number> => {
       const w = world(names);
-      await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear, token });
+      await findIssues({
+        fetch: w.fetchFn,
+        now: NOW,
+        retry: fast,
+        sleep: noWait,
+        claim: clear,
+        token,
+      });
       return w.queries.length;
     };
     expect(await calls()).toBeLessThanOrEqual(10);
@@ -488,11 +567,63 @@ describe("findIssues", () => {
     const names = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`o/r${String(i)}`, {}]));
     const checked = async (token?: string): Promise<number> => {
       const claim = vi.fn(clear);
-      await findIssues({ fetch: world(names).fetchFn, now: NOW, retry: fast, claim, token });
+      await findIssues({
+        fetch: world(names).fetchFn,
+        now: NOW,
+        retry: fast,
+        sleep: noWait,
+        claim,
+        token,
+      });
       return claim.mock.calls.length;
     };
     expect(await checked()).toBe(5);
     expect(await checked("t")).toBe(10);
+  });
+
+  it("spaces the searches out, because GitHub refuses a burst: 6.5 s without a token, 2 s with one", async () => {
+    const names = Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`o/r${String(i)}`, {}]));
+    const run = async (extra: { token?: string; searchGapMs?: number } = {}) => {
+      const w = world(names);
+      const pauses: number[] = [];
+      const claim = vi.fn(clear);
+      await findIssues({
+        fetch: w.fetchFn,
+        now: NOW,
+        retry: fast,
+        claim,
+        sleep: (ms) => (pauses.push(ms), Promise.resolve()),
+        ...extra,
+      });
+      return { pauses, searches: w.queries.length, claims: claim.mock.calls.length };
+    };
+    const plain = await run();
+    // One project search, four PR searches, one issue search: five pauses, none before the first.
+    expect(plain.searches).toBe(6);
+    expect(plain.pauses).toEqual(Array(5).fill(6500));
+    expect((await run({ token: "t" })).pauses).toEqual(Array(5).fill(2000));
+    expect((await run({ searchGapMs: 100 })).pauses).toEqual(Array(5).fill(100));
+    // The claim checks are not searches and are not delayed.
+    expect(plain.claims).toBe(4);
+  });
+
+  it("tells what it is doing as it goes", async () => {
+    const w = world({ "acme/good": {} });
+    const said: string[] = [];
+    await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+      progress: (l) => said.push(l),
+    });
+    expect(said).toEqual([
+      "searching for active projects...",
+      "measuring acme/good (1 of 1)...",
+      "looking for their open starter issues...",
+      "checking https://github.com/acme/good/issues/1 (1 of 1)...",
+    ]);
   });
 
   it("says when a project passed but has no open starter issue left", async () => {
@@ -505,7 +636,13 @@ describe("findIssues", () => {
       }
       return w.fetchFn(input);
     });
-    const r = await findIssues({ fetch: fetchFn, now: NOW, retry: fast, claim: clear });
+    const r = await findIssues({
+      fetch: fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
     expect(r.candidates).toEqual([]);
     expect(r.skipped.find((s) => s.what === "acme/empty")?.reason).toMatch(/no open, unassigned/);
   });
@@ -523,7 +660,13 @@ describe("findIssues", () => {
   });
 
   it("finds nothing, without error, when the search is empty", async () => {
-    const r = await findIssues({ fetch: world({}).fetchFn, now: NOW, retry: fast, claim: clear });
+    const r = await findIssues({
+      fetch: world({}).fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
     expect(r).toEqual({ candidates: [], skipped: [], repos: 0, issues: 0 });
   });
 });

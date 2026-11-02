@@ -34,6 +34,12 @@ export interface FindOptions extends FetchIssueOptions {
   /** Ignore issues not touched for this many days. */
   issueMaxAgeDays?: number;
   now?: Date;
+  /** Pause between search calls, in ms. GitHub refuses a burst of searches. Default 6500 without a token (10 a minute), 2000 with one. */
+  searchGapMs?: number;
+  /** Replaceable in tests. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Told what it is doing, because a paced run takes about a minute. */
+  progress?: (line: string) => void;
   /** Replaceable in tests. */
   claim?: (ref: IssueRef) => Promise<ClaimReport>;
 }
@@ -237,12 +243,23 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
   const since = day(new Date(now.getTime() - windowDays * DAY_MS));
   const issuesSince = day(new Date(now.getTime() - (o.issueMaxAgeDays ?? 180) * DAY_MS));
   const skipped: Skipped[] = [];
+  const say = o.progress ?? ((): void => undefined);
+  const sleep = o.sleep ?? ((ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)));
+  const gap = o.searchGapMs ?? (o.token ? 2000 : 6500);
+  let searches = 0;
+  // GitHub's secondary limit refuses a burst of searches even when the per-minute count is fine.
+  const paced = async (path: string, what: string, noun: string): Promise<unknown> => {
+    if (searches > 0) await sleep(gap);
+    searches += 1;
+    return getApi(path, what, o, noun);
+  };
 
   const search = (kind: "issues" | "repositories", q: string): string =>
     `/search/${kind}?${new URLSearchParams({ q, sort: "updated", order: "desc", per_page: "100" }).toString()}`;
 
+  say("searching for active projects...");
   const projects = repoSearch.parse(
-    await getApi(
+    await paced(
       search(
         "repositories",
         [
@@ -255,7 +272,6 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
         ].join(" "),
       ),
       "the project search",
-      o,
       "Search",
     ),
   );
@@ -284,12 +300,12 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
   }
 
   const qualified: RepoStats[] = [];
-  for (const p of toMeasure) {
+  for (const [n, p] of toMeasure.entries()) {
+    say(`measuring ${p.full_name} (${String(n + 1)} of ${String(toMeasure.length)})...`);
     const prs = prSearch.parse(
-      await getApi(
+      await paced(
         search("issues", `repo:${p.full_name} is:pr is:merged merged:>=${since}`),
         p.full_name,
-        o,
         "Repository",
       ),
     );
@@ -309,8 +325,9 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
   let issueCount = 0;
   for (let i = 0; i < qualified.length; i += REPOS_PER_ISSUE_SEARCH) {
     const group = qualified.slice(i, i + REPOS_PER_ISSUE_SEARCH);
+    say("looking for their open starter issues...");
     const found = issueSearch.parse(
-      await getApi(
+      await paced(
         search(
           "issues",
           [
@@ -323,7 +340,6 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
           ].join(" "),
         ),
         "the issue search",
-        o,
         "Search",
       ),
     );
@@ -397,7 +413,8 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
   const claim =
     o.claim ?? ((ref: IssueRef): Promise<ClaimReport> => checkIssueClaim(ref, { ...o, now }));
   const candidates: Candidate[] = [];
-  for (const c of scored.slice(0, maxClaims)) {
+  for (const [n, c] of scored.slice(0, maxClaims).entries()) {
+    say(`checking ${c.url} (${String(n + 1)} of ${String(Math.min(maxClaims, scored.length))})...`);
     const ref = {
       owner: c.repo.fullName.split("/")[0] ?? "",
       repo: c.repo.fullName.split("/")[1] ?? "",

@@ -165,7 +165,7 @@ function failure(
     const wait = res.headers.get("retry-after");
     if (wait !== null || /secondary rate limit|abuse/i.test(detail)) {
       return new GithubError(
-        `GitHub's secondary rate limit was hit (too many requests too fast).${wait === null ? "" : ` Wait ${wait} seconds`} and run again.`,
+        `GitHub's secondary rate limit was hit (too many requests too fast). ${wait === null ? "Wait a minute" : `Wait ${wait} seconds`}, then run again.`,
         403,
       );
     }
