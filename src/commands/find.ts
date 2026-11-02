@@ -3,6 +3,10 @@ import { type FindOptions, type FindResult, findIssues } from "../oss/find.js";
 
 export interface FindCommandOptions {
   language?: string;
+  /** Repeatable: look for issues with any of these labels. */
+  label?: string[];
+  /** Keep only issues labelled as a bug. */
+  bugsOnly?: boolean;
   minStars: number;
   /** Issues shown. */
   limit: number;
@@ -88,6 +92,8 @@ export async function executeFind(opts: FindCommandOptions, deps: FindCommandDep
     minStars: opts.minStars,
     windowDays: opts.window,
     ...(opts.language === undefined ? {} : { language: opts.language }),
+    ...(opts.label === undefined || opts.label.length === 0 ? {} : { labels: opts.label }),
+    ...(opts.bugsOnly ? { bugsOnly: true } : {}),
     ...(opts.maxRepos === undefined ? {} : { maxRepos: opts.maxRepos }),
   });
   if (opts.json) {
@@ -125,6 +131,13 @@ export function registerFind(
       "Find open starter issues in active projects that take outside contributions (read-only)",
     )
     .option("--language <name>", "only repositories in this language, such as typescript")
+    .option(
+      "--label <name>",
+      'look for issues with this label; repeat for several (default: "good first issue")',
+      (value: string, previous: string[]) => [...previous, value],
+      [] as string[],
+    )
+    .option("--bugs-only", "keep only issues whose label says bug")
     .option("--min-stars <n>", "skip projects with fewer stars", positiveInt("--min-stars"), 200)
     .option("--limit <n>", "how many issues to show", positiveInt("--limit"), 10)
     .option("--max-repos <n>", "how many projects to measure", positiveInt("--max-repos"))

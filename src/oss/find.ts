@@ -22,6 +22,10 @@ export const WEIGHTS = {
 export interface FindOptions extends FetchIssueOptions {
   /** `typescript`, `python`... Without it, any language. */
   language?: string;
+  /** Issue labels to look for (any of them). Default: "good first issue". */
+  labels?: string[];
+  /** Keep only issues whose label says bug. */
+  bugsOnly?: boolean;
   minStars?: number;
   /** How many repositories to measure. Each costs two API calls, and search is rate limited. */
   maxRepos?: number;
@@ -181,6 +185,18 @@ export function issueVerdict(issue: {
   return undefined;
 }
 
+/** A request for something new rather than a fix. Iaso is built for fixes, so these rank lower. */
+export function isFeatureLike(issue: { title: string; labels: readonly string[] }): boolean {
+  if (isBugLabelled(issue.labels)) return false;
+  return (
+    /^\s*(?:\W+\s*)?(?:feat|feature)\b/i.test(issue.title) ||
+    issue.labels.some((l) => /\b(enhancement|feature)\b/.test(l))
+  );
+}
+
+/** Points taken off a feature request. */
+export const FEATURE_PENALTY = 10;
+
 /** Two titles that differ only in numbers are the same template ("Add new Anime Quote 967"). */
 export const titleShape = (title: string): string =>
   title.toLowerCase().replace(/\d+/g, "#").replace(/\s+/g, " ").trim();
@@ -188,11 +204,12 @@ export const titleShape = (title: string): string =>
 /** Score one issue of a repository that passed `repoVerdict`, 0 to 100, with the reasons. */
 export function scoreIssue(
   repo: RepoStats,
-  issue: { comments: number; updatedAt: string; labels?: readonly string[] },
+  issue: { comments: number; updatedAt: string; labels?: readonly string[]; title?: string },
   now: Date,
 ): { score: number; reasons: string[] } {
   const age = Math.max(0, Math.floor((now.getTime() - Date.parse(issue.updatedAt)) / DAY_MS));
   const bug = isBugLabelled(issue.labels ?? []);
+  const feature = isFeatureLike({ title: issue.title ?? "", labels: issue.labels ?? [] });
   const activity = clamp01(repo.merged / 40) * WEIGHTS.activity;
   const outside = clamp01(repo.externalMerged / 20) * WEIGHTS.outside;
   const bugPoints = bug ? WEIGHTS.bug : 0;
@@ -200,10 +217,18 @@ export function scoreIssue(
   const quiet = clamp01(1 - issue.comments / 10) * WEIGHTS.quiet;
   const stars = clamp01(Math.log10(Math.max(1, repo.stars)) / 4) * WEIGHTS.stars;
   return {
-    score: Math.round(activity + outside + bugPoints + fresh + quiet + stars),
+    score: Math.max(
+      0,
+      Math.round(activity + outside + bugPoints + fresh + quiet + stars) -
+        (feature ? FEATURE_PENALTY : 0),
+    ),
     reasons: [
       `${String(repo.merged)} pull requests merged in the window, ${String(repo.externalMerged)} from outside contributors`,
-      bug ? "labelled as a bug" : "not labelled as a bug",
+      bug
+        ? "labelled as a bug"
+        : feature
+          ? "looks like a feature request, not a bug"
+          : "not labelled as a bug",
       `issue last touched ${String(age)} day(s) ago, ${String(issue.comments)} comment(s)`,
       `${String(repo.stars)} stars, ${
         isLicenseUnclear(repo.license)
@@ -213,6 +238,19 @@ export function scoreIssue(
     ],
   };
 }
+
+/** The repository-search qualifier GitHub offers for a label, when there is exactly one to use. */
+export function projectLabelQualifier(labels: readonly string[]): string | undefined {
+  if (labels.length !== 1) return undefined;
+  const only = labels[0]?.toLowerCase();
+  if (only === "good first issue") return "good-first-issues:>=3";
+  if (only === "help wanted") return "help-wanted-issues:>=3";
+  return undefined;
+}
+
+/** `label:"a","b"` finds issues with either label. */
+export const labelTerm = (labels: readonly string[]): string =>
+  `label:${labels.map((l) => `"${l.replace(/"/g, "")}"`).join(",")}`;
 
 const day = (d: Date): string => d.toISOString().slice(0, 10);
 
@@ -236,6 +274,9 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
   // Search allows 10 calls a minute without a token and 30 with one. A run uses one call for the
   // projects, one per project measured, and one per five projects for their issues.
   const maxRepos = o.maxRepos ?? (o.token ? 10 : 6);
+  const labels = o.labels && o.labels.length > 0 ? o.labels : ["good first issue"];
+  // Projects whose issues are looked at before any is measured; twice as many as are measured.
+  const poolSize = Math.min(20, maxRepos * 2);
   const perRepo = o.perRepo ?? 3;
   // The claim check is three ordinary calls per issue, and GitHub allows an unauthenticated
   // client only 60 of those an hour, so without a token it checks fewer.
@@ -272,7 +313,7 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
       search(
         "repositories",
         [
-          "good-first-issues:>=3",
+          ...(projectLabelQualifier(labels) ? [projectLabelQualifier(labels) ?? ""] : []),
           `stars:>=${String(minStars)}`,
           `pushed:>=${since}`,
           "archived:false",
@@ -286,7 +327,7 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
   );
 
   // Cheap checks first, from what the one search already told us.
-  const toMeasure: z.infer<typeof repoItem>[] = [];
+  const eligible: z.infer<typeof repoItem>[] = [];
   for (const p of projects.items) {
     const license = p.license?.spdx_id ?? null;
     if (p.archived || p.fork || p.disabled) {
@@ -298,17 +339,75 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
         what: p.full_name,
         reason: `${String(p.stargazers_count)} stars is under the ${String(minStars)} minimum`,
       });
-    } else if (toMeasure.length >= maxRepos) {
+    } else if (eligible.length >= poolSize) {
       skipped.push({
         what: p.full_name,
-        reason: `not measured: over the limit of ${String(maxRepos)} repositories`,
+        reason: `not looked at: over the limit of ${String(poolSize)} projects`,
       });
     } else {
-      toMeasure.push(p);
+      eligible.push(p);
+    }
+  }
+
+  // Their open issues first, five projects to a search, so no project is measured that has
+  // nothing to work on. Issues of the wrong kind are dropped here too, for the same reason.
+  const found = new Map<string, z.infer<typeof issueItem>[]>();
+  let issueCount = 0;
+  for (let i = 0; i < eligible.length; i += REPOS_PER_ISSUE_SEARCH) {
+    const group = eligible.slice(i, i + REPOS_PER_ISSUE_SEARCH);
+    say("looking for their open issues...");
+    const page = issueSearch.parse(
+      await paced(
+        search(
+          "issues",
+          [
+            labelTerm(labels),
+            "state:open",
+            "is:issue",
+            "no:assignee",
+            `updated:>=${issuesSince}`,
+            ...group.map((r) => `repo:${r.full_name}`),
+          ].join(" "),
+        ),
+        "the issue search",
+        "Search",
+      ),
+    );
+    issueCount += page.items.length;
+    for (const item of page.items) {
+      const name = repoOf(item.repository_url);
+      if (name === undefined || item.pull_request !== undefined) continue;
+      found.set(name.toLowerCase(), [...(found.get(name.toLowerCase()) ?? []), item]);
+    }
+  }
+  const viable = new Map<string, { i: z.infer<typeof issueItem>; labels: string[] }[]>();
+  const withIssues: z.infer<typeof repoItem>[] = [];
+  for (const p of eligible) {
+    const keep: { i: z.infer<typeof issueItem>; labels: string[] }[] = [];
+    for (const i of found.get(p.full_name.toLowerCase()) ?? []) {
+      const names = labelNames(i.labels);
+      const why =
+        issueVerdict({ title: i.title, labels: names }) ??
+        (o.bugsOnly && !isBugLabelled(names) ? "not labelled as a bug (--bugs-only)" : undefined);
+      if (why === undefined) keep.push({ i, labels: names });
+      else skipped.push({ what: i.html_url, reason: why });
+    }
+    if (keep.length === 0) {
+      skipped.push({ what: p.full_name, reason: "no suitable open, unassigned issue now" });
+    } else {
+      viable.set(p.full_name.toLowerCase(), keep);
+      withIssues.push(p);
     }
   }
 
   const qualified: RepoStats[] = [];
+  const toMeasure = withIssues.slice(0, maxRepos);
+  for (const p of withIssues.slice(maxRepos)) {
+    skipped.push({
+      what: p.full_name,
+      reason: `not measured: over the limit of ${String(maxRepos)} repositories`,
+    });
+  }
   for (const [n, p] of toMeasure.entries()) {
     say(`measuring ${p.full_name} (${String(n + 1)} of ${String(toMeasure.length)})...`);
     const prs = prSearch.parse(
@@ -329,55 +428,17 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
     else skipped.push({ what: p.full_name, reason: why });
   }
 
-  // Their open starter issues, five projects to a search.
-  const byRepo = new Map<string, z.infer<typeof issueItem>[]>();
-  let issueCount = 0;
-  for (let i = 0; i < qualified.length; i += REPOS_PER_ISSUE_SEARCH) {
-    const group = qualified.slice(i, i + REPOS_PER_ISSUE_SEARCH);
-    say("looking for their open starter issues...");
-    const found = issueSearch.parse(
-      await paced(
-        search(
-          "issues",
-          [
-            'label:"good first issue"',
-            "state:open",
-            "is:issue",
-            "no:assignee",
-            `updated:>=${issuesSince}`,
-            ...group.map((r) => `repo:${r.fullName}`),
-          ].join(" "),
-        ),
-        "the issue search",
-        "Search",
-      ),
-    );
-    issueCount += found.items.length;
-    for (const item of found.items) {
-      const name = repoOf(item.repository_url);
-      if (name === undefined || item.pull_request !== undefined) continue;
-      byRepo.set(name.toLowerCase(), [...(byRepo.get(name.toLowerCase()) ?? []), item]);
-    }
-  }
-  for (const repo of qualified) {
-    if ((byRepo.get(repo.fullName.toLowerCase()) ?? []).length === 0) {
-      skipped.push({ what: repo.fullName, reason: "no open, unassigned starter issue now" });
-    }
-  }
-
   const scored: Candidate[] = [];
   for (const repo of qualified) {
-    const taken: { i: z.infer<typeof issueItem>; labels: string[] }[] = [];
-    for (const i of byRepo.get(repo.fullName.toLowerCase()) ?? []) {
-      const labels = labelNames(i.labels);
-      const why = issueVerdict({ title: i.title, labels });
-      if (why === undefined) taken.push({ i, labels });
-      else skipped.push({ what: i.html_url, reason: why });
-    }
+    const taken = viable.get(repo.fullName.toLowerCase()) ?? [];
     const ranked = taken
       .map(({ i, labels }) => ({
         i,
-        ...scoreIssue(repo, { comments: i.comments, updatedAt: i.updated_at, labels }, now),
+        ...scoreIssue(
+          repo,
+          { comments: i.comments, updatedAt: i.updated_at, labels, title: i.title },
+          now,
+        ),
       }))
       .sort((a, b) => b.score - a.score);
     // One issue per template, and at most `perRepo` in all.

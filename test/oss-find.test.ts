@@ -6,10 +6,14 @@ import {
   WEIGHTS,
   countMerged,
   findIssues,
+  FEATURE_PENALTY,
   isBugLabelled,
   isCopyleft,
+  isFeatureLike,
   isLicenseUnclear,
   issueVerdict,
+  labelTerm,
+  projectLabelQualifier,
   repoVerdict,
   scoreIssue,
   titleShape,
@@ -105,7 +109,7 @@ describe("scoreIssue", () => {
 
   it("gives a bug label a fifth of the score, and nothing otherwise", () => {
     const withBug = scoreIssue(stats(), fresh, NOW).score;
-    const without = scoreIssue(stats(), { ...fresh, labels: ["enhancement"] }, NOW).score;
+    const without = scoreIssue(stats(), { ...fresh, labels: ["question"] }, NOW).score;
     expect(withBug - without).toBe(WEIGHTS.bug);
     expect(scoreIssue(stats(), { comments: 0, updatedAt: daysAgo(1) }, NOW).score).toBe(without);
   });
@@ -118,6 +122,26 @@ describe("scoreIssue", () => {
     expect(scoreIssue(stats(), { ...fresh, updatedAt: daysAgo(150) }, NOW).score).toBeLessThan(
       base,
     );
+  });
+
+  it("takes points off what looks like a feature request, but not off a bug", () => {
+    const plain = scoreIssue(stats(), { ...fresh, labels: ["question"] }, NOW).score;
+    const feature = scoreIssue(
+      stats(),
+      { ...fresh, labels: ["question"], title: "feature: box.git.clone()" },
+      NOW,
+    );
+    expect(plain - feature.score).toBe(FEATURE_PENALTY);
+    expect(feature.reasons.join("\n")).toContain("looks like a feature request");
+    const bug = scoreIssue(stats(), { ...fresh, title: "feat: crash on save" }, NOW).score;
+    expect(bug).toBe(scoreIssue(stats(), fresh, NOW).score);
+    expect(
+      scoreIssue(
+        stats({ merged: 0, externalMerged: 0, stars: 1 }),
+        { comments: 20, updatedAt: daysAgo(400), labels: ["enhancement"] },
+        NOW,
+      ).score,
+    ).toBe(0);
   });
 
   it("explains itself in plain words, including the bug label and a copyleft licence", () => {
@@ -168,6 +192,31 @@ describe("what kind of issue it is", () => {
     ]) {
       expect(issueVerdict({ title: t, labels: ["bug"] }), t).toBeUndefined();
     }
+  });
+
+  it("knows a feature request by its title or label, unless it is labelled a bug", () => {
+    for (const t of [
+      "feature: box.git.clone()",
+      "Feat(cli): add a flag",
+      "✨ Feature request: x",
+    ]) {
+      expect(isFeatureLike({ title: t, labels: [] }), t).toBe(true);
+    }
+    expect(isFeatureLike({ title: "Add a flag", labels: ["enhancement"] })).toBe(true);
+    expect(isFeatureLike({ title: "feature: x", labels: ["bug"] })).toBe(false);
+    for (const t of ["Crash on save", "Featureless page renders blank", "Fix the feature flag"]) {
+      expect(isFeatureLike({ title: t, labels: [] }), t).toBe(false);
+    }
+  });
+
+  it("builds the label search, and a project qualifier only when GitHub has one for it", () => {
+    expect(labelTerm(["bug"])).toBe('label:"bug"');
+    expect(labelTerm(["bug", "help wanted"])).toBe('label:"bug","help wanted"');
+    expect(labelTerm(['x"y'])).toBe('label:"xy"');
+    expect(projectLabelQualifier(["good first issue"])).toBe("good-first-issues:>=3");
+    expect(projectLabelQualifier(["Help Wanted"])).toBe("help-wanted-issues:>=3");
+    expect(projectLabelQualifier(["bug"])).toBeUndefined();
+    expect(projectLabelQualifier(["good first issue", "help wanted"])).toBeUndefined();
   });
 
   it("gives titles that differ only in numbers the same shape", () => {
@@ -360,7 +409,7 @@ describe("findIssues", () => {
     expect(why["acme/bots"]).toMatch(/merged lately/);
   });
 
-  it("searches issues only for projects that passed, five to a search", async () => {
+  it("looks at issues for the projects that pass the cheap checks, five to a search, before measuring any", async () => {
     const names = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [`o/r${String(i)}`, {}]));
     const w = world({ ...names, "o/quiet": { prs: [] } });
     await findIssues({
@@ -371,11 +420,103 @@ describe("findIssues", () => {
       claim: clear,
       maxRepos: 20,
     });
+    const kinds = w.queries.map((x) => x.kind);
+    expect(kinds.indexOf("prs")).toBeGreaterThan(kinds.lastIndexOf("issues"));
     const issueSearches = w.queries.filter((x) => x.kind === "issues");
     expect(issueSearches).toHaveLength(2);
     expect(issueSearches[0]?.q.match(/repo:/g)).toHaveLength(5);
-    expect(issueSearches[1]?.q.match(/repo:/g)).toHaveLength(2);
-    expect(issueSearches.some((x) => x.q.includes("o/quiet"))).toBe(false);
+    expect(issueSearches[1]?.q.match(/repo:/g)).toHaveLength(3);
+  });
+
+  it("does not measure a project that has no suitable issue", async () => {
+    const w = world({
+      "acme/good": {},
+      "acme/chores": {
+        issues: [{ number: 1, title: "Add new Quote 9", labels: ["hacktoberfest"] }],
+      },
+    });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
+    expect(r.candidates.map((c) => c.repo.fullName)).toEqual(["acme/good"]);
+    const measured = w.queries.filter((x) => x.kind === "prs").map((x) => x.q);
+    expect(measured).toHaveLength(1);
+    expect(measured[0]).toContain("repo:acme/good");
+    expect(r.skipped.find((s) => s.what === "acme/chores")?.reason).toMatch(/no suitable open/);
+  });
+
+  it("looks for the labels it is given, any of them, and uses a project qualifier only when it can", async () => {
+    const w = world({ "acme/good": {} });
+    await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+      labels: ["bug", "help wanted"],
+    });
+    const projects = w.queries.find((x) => x.kind === "repos")?.q ?? "";
+    expect(projects).not.toContain("good-first-issues");
+    expect(projects).not.toContain("help-wanted-issues");
+    expect(w.queries.find((x) => x.kind === "issues")?.q).toContain('label:"bug","help wanted"');
+
+    const one = world({ "acme/good": {} });
+    await findIssues({
+      fetch: one.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+      labels: ["help wanted"],
+    });
+    expect(one.queries.find((x) => x.kind === "repos")?.q).toContain("help-wanted-issues:>=3");
+  });
+
+  it("with bugsOnly, keeps only bug-labelled issues and does not measure a project without one", async () => {
+    const w = world({
+      "acme/good": {
+        issues: [
+          { number: 1, title: "Login fails", labels: ["bug"] },
+          { number: 2, title: "Support dark mode", labels: ["help wanted"] },
+        ],
+      },
+      "acme/features": { issues: [{ number: 1, title: "Support X", labels: ["help wanted"] }] },
+    });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+      bugsOnly: true,
+    });
+    expect(r.candidates.map((c) => c.url)).toEqual(["https://github.com/acme/good/issues/1"]);
+    expect(r.skipped.find((s) => s.what.endsWith("good/issues/2"))?.reason).toMatch(/--bugs-only/);
+    expect(w.queries.filter((x) => x.kind === "prs")).toHaveLength(1);
+  });
+
+  it("ranks a feature request below an otherwise equal issue", async () => {
+    const w = world({
+      "acme/good": {
+        issues: [
+          { number: 1, title: "feature: add git status", labels: ["help wanted"] },
+          { number: 2, title: "Cannot open settings", labels: ["help wanted"] },
+        ],
+      },
+    });
+    const r = await findIssues({
+      fetch: w.fetchFn,
+      now: NOW,
+      retry: fast,
+      sleep: noWait,
+      claim: clear,
+    });
+    expect(r.candidates.map((c) => c.number)).toEqual([2, 1]);
+    expect((r.candidates[0]?.score ?? 0) - (r.candidates[1]?.score ?? 0)).toBe(FEATURE_PENALTY);
   });
 
   it("ranks by score, keeps at most `perRepo` issues per project, and prefers quiet fresh issues", async () => {
@@ -683,13 +824,13 @@ describe("findIssues", () => {
     });
     expect(said).toEqual([
       "searching for active projects...",
+      "looking for their open issues...",
       "measuring acme/good (1 of 1)...",
-      "looking for their open starter issues...",
       "checking https://github.com/acme/good/issues/1 (1 of 1)...",
     ]);
   });
 
-  it("says when a project passed but has no open starter issue left", async () => {
+  it("says when a project has no open starter issue left, and does not measure it", async () => {
     const w = world({ "acme/empty": { issues: [] } });
     const fetchFn = vi.fn((input: string | URL | Request) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -707,7 +848,10 @@ describe("findIssues", () => {
       claim: clear,
     });
     expect(r.candidates).toEqual([]);
-    expect(r.skipped.find((s) => s.what === "acme/empty")?.reason).toMatch(/no open, unassigned/);
+    expect(r.skipped.find((s) => s.what === "acme/empty")?.reason).toMatch(
+      /no suitable open, unassigned/,
+    );
+    expect(w.queries.filter((x) => x.kind === "prs")).toEqual([]);
   });
 
   it("raises GitHub's rate-limit error as it is", async () => {
