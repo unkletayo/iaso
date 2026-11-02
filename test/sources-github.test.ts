@@ -180,6 +180,10 @@ describe("fetchIssue", () => {
       /secondary rate limit.*Wait 45 seconds/,
     );
     expect(byHeader).toHaveBeenCalledTimes(1);
+    const waits = await fetchIssue(ref, { fetch: byHeader, retry: fast }).catch(
+      (e: unknown) => (e as GithubError).secondaryWaitSeconds,
+    );
+    expect(waits).toBe(45);
     const noWait = fakeFetch({
       "/issues/7": () =>
         new Response(JSON.stringify({ message: "secondary rate limit" }), { status: 403 }),

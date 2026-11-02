@@ -47,6 +47,8 @@ export class GithubError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    /** Set for GitHub's secondary rate limit: how many seconds it asked us to wait (60 if it did not say). */
+    readonly secondaryWaitSeconds?: number,
   ) {
     super(message);
     this.name = "GithubError";
@@ -164,9 +166,11 @@ function failure(
     // The secondary limit (too many requests too fast) has no "remaining" header at all.
     const wait = res.headers.get("retry-after");
     if (wait !== null || /secondary rate limit|abuse/i.test(detail)) {
+      const seconds = Number(wait);
       return new GithubError(
         `GitHub's secondary rate limit was hit (too many requests too fast). ${wait === null ? "Wait a minute" : `Wait ${wait} seconds`}, then run again.`,
         403,
+        Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 120) : 60,
       );
     }
     if (res.headers.get("x-ratelimit-remaining") === "0" || res.status === 429) {

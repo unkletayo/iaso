@@ -581,7 +581,7 @@ describe("findIssues", () => {
     expect(await checked("t")).toBe(10);
   });
 
-  it("spaces the searches out, because GitHub refuses a burst: 6.5 s without a token, 2 s with one", async () => {
+  it("spaces the searches out, because GitHub refuses a burst: 6.5 s without a token, 3 s with one", async () => {
     const names = Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`o/r${String(i)}`, {}]));
     const run = async (extra: { token?: string; searchGapMs?: number } = {}) => {
       const w = world(names);
@@ -601,10 +601,73 @@ describe("findIssues", () => {
     // One project search, four PR searches, one issue search: five pauses, none before the first.
     expect(plain.searches).toBe(6);
     expect(plain.pauses).toEqual(Array(5).fill(6500));
-    expect((await run({ token: "t" })).pauses).toEqual(Array(5).fill(2000));
+    expect((await run({ token: "t" })).pauses).toEqual(Array(5).fill(3000));
     expect((await run({ searchGapMs: 100 })).pauses).toEqual(Array(5).fill(100));
     // The claim checks are not searches and are not delayed.
     expect(plain.claims).toBe(4);
+  });
+
+  it("waits as long as GitHub asks after the secondary limit, then tries that search again", async () => {
+    const w = world({ "acme/good": {} });
+    let failed = 0;
+    const flaky = vi.fn((input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const q = new URL(url).searchParams.get("q") ?? "";
+      if (failed === 0 && q.includes("is:pr")) {
+        failed += 1;
+        return Promise.resolve(
+          new Response(JSON.stringify({ message: "secondary rate limit" }), {
+            status: 403,
+            headers: { "retry-after": "30" },
+          }),
+        );
+      }
+      return w.fetchFn(input);
+    });
+    const pauses: number[] = [];
+    const said: string[] = [];
+    const r = await findIssues({
+      fetch: flaky,
+      now: NOW,
+      retry: fast,
+      claim: clear,
+      sleep: (ms) => (pauses.push(ms), Promise.resolve()),
+      progress: (l) => said.push(l),
+    });
+    expect(r.candidates.map((c) => c.repo.fullName)).toEqual(["acme/good"]);
+    expect(pauses).toContain(30_000);
+    expect(said).toContain("GitHub asked us to slow down; waiting 30 seconds...");
+  });
+
+  it("waits a minute when GitHub gives no time, tries once only, and then says so", async () => {
+    const always = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ message: "You have exceeded a secondary rate limit" }), {
+          status: 403,
+        }),
+      ),
+    );
+    const pauses: number[] = [];
+    await expect(
+      findIssues({
+        fetch: always,
+        now: NOW,
+        retry: fast,
+        sleep: (ms) => (pauses.push(ms), Promise.resolve()),
+      }),
+    ).rejects.toThrow(/secondary rate limit/);
+    expect(pauses).toEqual([60_000]);
+    expect(always).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry other refusals", async () => {
+    const refused = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify({ message: "Forbidden" }), { status: 403 })),
+    );
+    await expect(
+      findIssues({ fetch: refused, now: NOW, retry: fast, sleep: noWait }),
+    ).rejects.toThrow(/refused access/);
+    expect(refused).toHaveBeenCalledTimes(1);
   });
 
   it("tells what it is doing as it goes", async () => {

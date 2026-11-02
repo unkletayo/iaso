@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type FetchIssueOptions, type IssueRef, getApi } from "../sources/github.js";
+import { type FetchIssueOptions, GithubError, type IssueRef, getApi } from "../sources/github.js";
 import { type ClaimReport, checkIssueClaim } from "./claim.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -34,7 +34,7 @@ export interface FindOptions extends FetchIssueOptions {
   /** Ignore issues not touched for this many days. */
   issueMaxAgeDays?: number;
   now?: Date;
-  /** Pause between search calls, in ms. GitHub refuses a burst of searches. Default 6500 without a token (10 a minute), 2000 with one. */
+  /** Pause between search calls, in ms. GitHub refuses a burst of searches. Default 6500 without a token (10 a minute), 3000 with one. */
   searchGapMs?: number;
   /** Replaceable in tests. */
   sleep?: (ms: number) => Promise<void>;
@@ -235,7 +235,7 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
   const minStars = o.minStars ?? 200;
   // Search allows 10 calls a minute without a token and 30 with one. A run uses one call for the
   // projects, one per project measured, and one per five projects for their issues.
-  const maxRepos = o.maxRepos ?? (o.token ? 15 : 6);
+  const maxRepos = o.maxRepos ?? (o.token ? 10 : 6);
   const perRepo = o.perRepo ?? 3;
   // The claim check is three ordinary calls per issue, and GitHub allows an unauthenticated
   // client only 60 of those an hour, so without a token it checks fewer.
@@ -245,13 +245,22 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
   const skipped: Skipped[] = [];
   const say = o.progress ?? ((): void => undefined);
   const sleep = o.sleep ?? ((ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)));
-  const gap = o.searchGapMs ?? (o.token ? 2000 : 6500);
+  const gap = o.searchGapMs ?? (o.token ? 3000 : 6500);
   let searches = 0;
-  // GitHub's secondary limit refuses a burst of searches even when the per-minute count is fine.
+  // GitHub's secondary limit refuses a burst of searches even when the per-minute count is fine,
+  // and it can trip late in a run. Throwing away the work done so far would be the worst answer,
+  // so on that one error: wait as long as GitHub asks, and try the same search once more.
   const paced = async (path: string, what: string, noun: string): Promise<unknown> => {
     if (searches > 0) await sleep(gap);
     searches += 1;
-    return getApi(path, what, o, noun);
+    try {
+      return await getApi(path, what, o, noun);
+    } catch (err) {
+      if (!(err instanceof GithubError) || err.secondaryWaitSeconds === undefined) throw err;
+      say(`GitHub asked us to slow down; waiting ${String(err.secondaryWaitSeconds)} seconds...`);
+      await sleep(err.secondaryWaitSeconds * 1000);
+      return getApi(path, what, o, noun);
+    }
   };
 
   const search = (kind: "issues" | "repositories", q: string): string =>
