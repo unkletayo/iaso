@@ -21,6 +21,7 @@ const candidate = (n: number, over: Partial<Candidate> = {}): Candidate => ({
   reasons: ["20 pull requests merged", "2000 stars"],
   claim: { blockers: [], warnings: [] },
   copyleft: false,
+  licenseUnclear: false,
   ...over,
 });
 
@@ -74,6 +75,11 @@ describe("renderFind", () => {
     expect(renderFind(result(), base)).not.toContain("copyleft");
   });
 
+  it("marks a project whose licence GitHub could not classify", () => {
+    const text = renderFind(result({ candidates: [candidate(1, { licenseUnclear: true })] }), base);
+    expect(text).toContain("score 79 [licence unclear]  https://github.com/acme/widgets/issues/1");
+  });
+
   it("shows only `limit` issues and says so", () => {
     const text = renderFind(result(), { ...base, limit: 2 });
     expect(text).toContain("Issue 2");
@@ -94,7 +100,9 @@ describe("renderFind", () => {
   });
 
   it("warns about the rate limit without a token, and not with one", () => {
-    expect(renderFind(result(), { ...base, hasToken: false })).toContain("No GITHUB_TOKEN");
+    const text = renderFind(result(), { ...base, hasToken: false });
+    expect(text).toContain("No GITHUB_TOKEN");
+    expect(text).toContain("60 other calls an hour");
     expect(renderFind(result(), base)).not.toContain("No GITHUB_TOKEN");
   });
 

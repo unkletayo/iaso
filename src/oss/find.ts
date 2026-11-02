@@ -59,6 +59,8 @@ export interface Candidate {
   claim: ClaimReport;
   /** The licence asks that your change be released under the same terms (GPL, AGPL, MPL...). */
   copyleft: boolean;
+  /** GitHub could not classify the LICENSE file: read it before you contribute. */
+  licenseUnclear: boolean;
 }
 
 export interface Skipped {
@@ -126,9 +128,9 @@ export function countMerged(
 
 /** Why a repository is not worth a contribution right now, or `undefined` when it is. */
 export function repoVerdict(r: RepoStats, minStars: number): string | undefined {
-  if (r.license === null || r.license === "NOASSERTION") {
-    return "no recognised licence";
-  }
+  // `NOASSERTION` means a LICENSE file GitHub could not classify, not that there is none. Those
+  // projects stay in, flagged, and the person reads the file.
+  if (r.license === null) return "no licence file";
   if (r.stars < minStars)
     return `${String(r.stars)} stars is under the ${String(minStars)} minimum`;
   if (r.merged < MIN_MERGED) {
@@ -148,6 +150,9 @@ const labelNames = (labels: z.infer<typeof issueItem>["labels"]): string[] =>
 /** Iaso fixes bugs, so a label that says "bug" is the signal that the work is its kind of work. */
 export const isBugLabelled = (labels: readonly string[]): boolean =>
   labels.some((l) => /\b(bug|defect|regression|crash)\b/.test(l));
+
+/** GitHub found a LICENSE file but could not tell which licence it is. */
+export const isLicenseUnclear = (license: string | null): boolean => license === "NOASSERTION";
 
 /** A licence that asks for changes to be shared under the same terms. */
 export const isCopyleft = (license: string | null): boolean =>
@@ -194,7 +199,11 @@ export function scoreIssue(
       `${String(repo.merged)} pull requests merged in the window, ${String(repo.externalMerged)} from outside contributors`,
       bug ? "labelled as a bug" : "not labelled as a bug",
       `issue last touched ${String(age)} day(s) ago, ${String(issue.comments)} comment(s)`,
-      `${String(repo.stars)} stars, licence ${repo.license ?? "unknown"}${isCopyleft(repo.license) ? " (copyleft: your change must be released under the same terms)" : ""}`,
+      `${String(repo.stars)} stars, ${
+        isLicenseUnclear(repo.license)
+          ? "licence unclear (GitHub could not classify the LICENSE file: read it)"
+          : `licence ${repo.license ?? "unknown"}${isCopyleft(repo.license) ? " (copyleft: your change must be released under the same terms)" : ""}`
+      }`,
     ],
   };
 }
@@ -222,7 +231,9 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
   // projects, one per project measured, and one per five projects for their issues.
   const maxRepos = o.maxRepos ?? (o.token ? 15 : 6);
   const perRepo = o.perRepo ?? 3;
-  const maxClaims = o.maxClaims ?? 10;
+  // The claim check is three ordinary calls per issue, and GitHub allows an unauthenticated
+  // client only 60 of those an hour, so without a token it checks fewer.
+  const maxClaims = o.maxClaims ?? (o.token ? 10 : 5);
   const since = day(new Date(now.getTime() - windowDays * DAY_MS));
   const issuesSince = day(new Date(now.getTime() - (o.issueMaxAgeDays ?? 180) * DAY_MS));
   const skipped: Skipped[] = [];
@@ -255,8 +266,8 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
     const license = p.license?.spdx_id ?? null;
     if (p.archived || p.fork || p.disabled) {
       skipped.push({ what: p.full_name, reason: "archived, disabled or a fork" });
-    } else if (license === null || license === "NOASSERTION") {
-      skipped.push({ what: p.full_name, reason: "no recognised licence" });
+    } else if (license === null) {
+      skipped.push({ what: p.full_name, reason: "no licence file" });
     } else if (p.stargazers_count < minStars) {
       skipped.push({
         what: p.full_name,
@@ -375,6 +386,7 @@ export async function findIssues(o: FindOptions = {}): Promise<FindResult> {
         reasons,
         claim: { blockers: [], warnings: [] },
         copyleft: isCopyleft(repo.license),
+        licenseUnclear: isLicenseUnclear(repo.license),
       });
     }
   }

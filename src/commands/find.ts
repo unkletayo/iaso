@@ -42,7 +42,7 @@ export function renderFind(
   }
   shown.forEach((c, i) => {
     lines.push(
-      `${String(i + 1).padStart(2)}. score ${String(c.score)}${c.copyleft ? " [copyleft licence]" : ""}  ${c.url}`,
+      `${String(i + 1).padStart(2)}. score ${String(c.score)}${c.copyleft ? " [copyleft licence]" : ""}${c.licenseUnclear ? " [licence unclear]" : ""}  ${c.url}`,
       `    ${c.title}`,
       `    ${c.reasons.join("; ")}`,
       ...c.claim.warnings.map((w) => `    note: ${w}`),
@@ -61,7 +61,7 @@ export function renderFind(
   }
   if (!o.hasToken) {
     lines.push(
-      "No GITHUB_TOKEN is set, so GitHub allows 10 searches a minute and at most 6 projects were measured.",
+      "No GITHUB_TOKEN is set, so GitHub allows 10 searches a minute and only 60 other calls an hour: at most 6 projects were measured and 5 issues checked, and a second run within the hour may be refused.",
     );
   }
   lines.push(

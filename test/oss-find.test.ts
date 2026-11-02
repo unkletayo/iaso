@@ -8,6 +8,7 @@ import {
   findIssues,
   isBugLabelled,
   isCopyleft,
+  isLicenseUnclear,
   issueVerdict,
   repoVerdict,
   scoreIssue,
@@ -77,9 +78,12 @@ describe("repoVerdict", () => {
     expect(repoVerdict(stats(), 200)).toBeUndefined();
   });
 
+  it("keeps a project whose LICENSE file GitHub could not classify, for a person to read", () => {
+    expect(repoVerdict(stats({ license: "NOASSERTION" }), 200)).toBeUndefined();
+  });
+
   it.each([
-    [{ license: null }, /licence/],
-    [{ license: "NOASSERTION" }, /licence/],
+    [{ license: null }, /no licence file/],
     [{ stars: 50 }, /stars/],
     [{ merged: MIN_MERGED - 1 }, /merged lately/],
     [{ externalMerged: MIN_EXTERNAL_MERGED - 1 }, /outside contributors/],
@@ -168,6 +172,18 @@ describe("what kind of issue it is", () => {
   it("gives titles that differ only in numbers the same shape", () => {
     expect(titleShape("Fix  Quote 967")).toBe(titleShape("fix quote 12"));
     expect(titleShape("Fix quote 967")).not.toBe(titleShape("Fix idiom 967"));
+  });
+
+  it("tells an unclassified licence file from no licence", () => {
+    expect(isLicenseUnclear("NOASSERTION")).toBe(true);
+    for (const l of ["MIT", "AGPL-3.0", null]) expect(isLicenseUnclear(l), String(l)).toBe(false);
+    const reasons = scoreIssue(
+      stats({ license: "NOASSERTION" }),
+      { comments: 0, updatedAt: daysAgo(1) },
+      NOW,
+    ).reasons;
+    expect(reasons.join("\n")).toContain("licence unclear");
+    expect(reasons.join("\n")).not.toContain("licence NOASSERTION");
   });
 
   it("spots copyleft licences, and not permissive ones", () => {
@@ -269,7 +285,7 @@ describe("findIssues", () => {
     const why = Object.fromEntries(r.skipped.map((s) => [s.what, s.reason]));
     expect(why["acme/old"]).toMatch(/archived/);
     expect(why["acme/forked"]).toMatch(/fork/);
-    expect(why["acme/closed"]).toMatch(/licence/);
+    expect(why["acme/closed"]).toMatch(/no licence file/);
     expect(why["acme/tiny"]).toMatch(/stars/);
     expect(r.repos).toBe(5);
     // Nothing was spent measuring the four that failed the cheap checks.
@@ -400,6 +416,15 @@ describe("findIssues", () => {
     expect(folded?.reason).toMatch(/^2 more issue\(s\) with the same title pattern as .*issues\/1/);
   });
 
+  it("keeps a project with an unclassified licence, flagged, and drops one with no licence file", async () => {
+    const w = world({ "acme/other": { license: "NOASSERTION" }, "acme/none": { license: null } });
+    const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
+    expect(r.candidates.map((c) => [c.repo.fullName, c.licenseUnclear])).toEqual([
+      ["acme/other", true],
+    ]);
+    expect(r.skipped.find((s) => s.what === "acme/none")?.reason).toBe("no licence file");
+  });
+
   it("marks a copyleft project's issues so they are not missed", async () => {
     const w = world({ "acme/agpl": { license: "AGPL-3.0" }, "acme/mit": { license: "MIT" } });
     const r = await findIssues({ fetch: w.fetchFn, now: NOW, retry: fast, claim: clear });
@@ -457,6 +482,17 @@ describe("findIssues", () => {
     expect(await calls()).toBeLessThanOrEqual(10);
     expect(await calls("t")).toBeLessThanOrEqual(30);
     expect(await calls("t")).toBeGreaterThan(await calls());
+  });
+
+  it("checks fewer issues without a token, because unauthenticated GitHub allows 60 ordinary calls an hour", async () => {
+    const names = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`o/r${String(i)}`, {}]));
+    const checked = async (token?: string): Promise<number> => {
+      const claim = vi.fn(clear);
+      await findIssues({ fetch: world(names).fetchFn, now: NOW, retry: fast, claim, token });
+      return claim.mock.calls.length;
+    };
+    expect(await checked()).toBe(5);
+    expect(await checked("t")).toBe(10);
   });
 
   it("says when a project passed but has no open starter issue left", async () => {
