@@ -164,6 +164,34 @@ describe("fetchIssue", () => {
     await expect(fetchIssue(ref, { fetch: f403 })).rejects.toThrow(/refused access/);
   });
 
+  it("says why GitHub refused, in GitHub's own words, when it gives a reason", async () => {
+    const body = JSON.stringify({ message: "Resource not accessible by personal access token" });
+    const f = fakeFetch({ "/issues/7": () => new Response(body, { status: 403 }) });
+    await expect(fetchIssue(ref, { fetch: f })).rejects.toThrow(
+      /refused access to acme\/widgets#7 \(403\): Resource not accessible by personal access token/,
+    );
+  });
+
+  it("recognises GitHub's secondary rate limit by its header or its words, and does not retry it", async () => {
+    const byHeader = fakeFetch({
+      "/issues/7": () => new Response("{}", { status: 403, headers: { "retry-after": "45" } }),
+    });
+    await expect(fetchIssue(ref, { fetch: byHeader, retry: fast })).rejects.toThrow(
+      /secondary rate limit.*Wait 45 seconds/,
+    );
+    expect(byHeader).toHaveBeenCalledTimes(1);
+    const byWords = fakeFetch({
+      "/issues/7": () =>
+        new Response(JSON.stringify({ message: "You have exceeded a secondary rate limit." }), {
+          status: 403,
+        }),
+    });
+    await expect(fetchIssue(ref, { fetch: byWords, retry: fast })).rejects.toThrow(
+      /secondary rate limit/,
+    );
+    expect(byWords).toHaveBeenCalledTimes(1);
+  });
+
   it("reports a rate limit with the reset time, and does not retry it", async () => {
     const f = fakeFetch({
       "/issues/7": () =>

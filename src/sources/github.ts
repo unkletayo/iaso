@@ -128,7 +128,29 @@ const cut = (text: string, max: number): string =>
     ? text
     : `${text.slice(0, max)}\n[cut: ${String(text.length - max)} more characters]`;
 
-function failure(res: Response, what: string, hasToken: boolean, noun: string): GithubError {
+/** GitHub's own explanation of a failure, cut short. Its error bodies hold no credentials. */
+async function detailOf(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    try {
+      const message = (JSON.parse(text) as { message?: unknown }).message;
+      if (typeof message === "string") return message.slice(0, 300);
+    } catch {
+      // Not JSON: use the text.
+    }
+    return text.trim().slice(0, 300);
+  } catch {
+    return "";
+  }
+}
+
+function failure(
+  res: Response,
+  what: string,
+  hasToken: boolean,
+  noun: string,
+  detail = "",
+): GithubError {
   if (res.status === 404) {
     return new GithubError(
       `${noun} not found: ${what}.${hasToken ? " Check the URL and that the token can read this repository." : " If the repository is private, set GITHUB_TOKEN."}`,
@@ -139,6 +161,14 @@ function failure(res: Response, what: string, hasToken: boolean, noun: string): 
     return new GithubError("GitHub rejected GITHUB_TOKEN (401). Check that it is valid.", 401);
   }
   if (res.status === 403 || res.status === 429) {
+    // The secondary limit (too many requests too fast) has no "remaining" header at all.
+    const wait = res.headers.get("retry-after");
+    if (wait !== null || /secondary rate limit|abuse/i.test(detail)) {
+      return new GithubError(
+        `GitHub's secondary rate limit was hit (too many requests too fast).${wait === null ? "" : ` Wait ${wait} seconds`} and run again.`,
+        403,
+      );
+    }
     if (res.headers.get("x-ratelimit-remaining") === "0" || res.status === 429) {
       const reset = Number(res.headers.get("x-ratelimit-reset"));
       const when =
@@ -151,9 +181,15 @@ function failure(res: Response, what: string, hasToken: boolean, noun: string): 
         403,
       );
     }
-    return new GithubError(`GitHub refused access to ${what} (403).`, 403);
+    return new GithubError(
+      `GitHub refused access to ${what} (403)${detail === "" ? "." : `: ${detail}`}`,
+      403,
+    );
   }
-  return new GithubError(`GitHub API error ${String(res.status)} for ${what}.`, res.status);
+  return new GithubError(
+    `GitHub API error ${String(res.status)} for ${what}${detail === "" ? "." : `: ${detail}`}`,
+    res.status,
+  );
 }
 
 /**
@@ -176,7 +212,7 @@ export async function getApi(
         ...(o.token ? { Authorization: `Bearer ${o.token}` } : {}),
       },
     });
-    if (!res.ok) throw failure(res, what, Boolean(o.token), noun);
+    if (!res.ok) throw failure(res, what, Boolean(o.token), noun, await detailOf(res));
     return res.json();
   }, o.retry);
 }
