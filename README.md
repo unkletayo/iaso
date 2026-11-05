@@ -1,103 +1,206 @@
 # Iaso
 
-Iaso (Ἰασώ) is the Greek goddess of recovery and healing; this agent brings broken code back to health.
+Iaso (Ἰασώ) is the Greek goddess of recovery and healing. This agent brings broken code back to health.
 
-Iaso is a command-line coding agent. It takes a bug report and a repository, reproduces the bug with a failing test, applies a minimal fix, runs the tests, and outputs a patch. A human reviews the patch and opens the PR. Iaso never pushes code.
+Iaso is a command-line coding agent that takes a bug report and a repository, reproduces the bug with a failing test, applies a minimal fix, verifies the tests pass, and outputs a patch. You review the patch and open the PR. Iaso never pushes code on its own.
 
-> Status: early development (M7 done, part of M12 built). `iaso models`, `iaso plan`, `iaso run` and `iaso replay` work, from a local repo or a GitHub issue URL. `iaso bench` runs a seeded SWE-bench Lite sample and grades it with the official harness. `iaso pr` drafts a pull request from a finished run; opening it is still a manual step.
+**Status:** active development. `iaso models`, `iaso plan`, `iaso run`, `iaso replay`, `iaso find`, `iaso pr` and `iaso bench` all work, from a local repo or a GitHub issue URL.
+
+One real benchmark result: **7 of 10 SWE-bench Lite tasks resolved** (95% CI 40%–89%), graded by the official harness, at a mean of **\$0.10 per task** using Claude Haiku.
+
+---
+
+## What it does
+
+You give it a GitHub issue URL:
+
+```sh
+iaso run --github https://github.com/owner/repo/issues/123 \
+         --model anthropic:claude-haiku-5-5
+```
+
+Before spending anything, Iaso checks that nobody else is already working on the issue: it stops if the issue is closed, locked, or assigned, and if an open pull request already says it closes the issue. There's no flag that overrides a stop.
+
+Then it reads the project's contribution rules — `CONTRIBUTING`, the PR template, any AI policy, `AGENTS.md` — and writes them to `runs/<id>/conventions.json`. If the project appears to forbid AI-generated contributions, it stops and quotes the lines. That stop is deliberate; there's no override.
+
+If the rules pass, it spins up a Docker sandbox, runs the agent loop, and writes three files:
+
+- `patch.diff` — the fix
+- `report.md` — what it did, the plan, every test run, cost, step count
+- `run.json` — structured metadata for `iaso pr`
+
+You apply the patch, run the tests yourself, and open the PR if it looks good.
+
+---
+
+## How the agent works
+
+The loop runs in four phases: **plan → reproduce → fix → verify**.
+
+Planning is a separate model call with read-only bash access. The agent reads the codebase, writes a structured plan (steps, files to change, risks), and either submits it automatically or waits for your approval (`--approve-plan`). The fix loop then runs against that pinned plan.
+
+Each step, the agent can call `bash`, `read_file`, `edit_file`, `notes` (to record facts, test results, and failed approaches), and `submit` (to end the run). Token usage is tracked per step. When the context window fills up, a cheaper model compacts older steps into a rolling summary with a fixed schema: `learned`, `files`, `tests`, `failedApproaches` — no information is ever discarded silently.
+
+If the agent repeats the same bash command or the same edit three times, it's nudged. At five identical repetitions, the run ends as `stuck`. Cost, step count, and time each have hard limits; the defaults are \$1, 50 steps, and 20 minutes.
+
+A run writes one trajectory step per line to `trajectory.jsonl` as it goes, so a crash doesn't lose earlier work, and `iaso replay` can reconstruct exactly what the model saw at any step.
+
+---
 
 ## Try it
 
-Requires Node 22+.
+Requires Node 22+ and Docker (for `iaso run`).
 
 ```sh
 npm install
 npx tsx src/cli.ts --help
-npx tsx src/cli.ts models
+npx tsx src/cli.ts models        # list models + which API keys are set
 ```
 
-`iaso models` lists the model catalogue and shows which API keys are set. API keys are read from environment variables only (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`).
+API keys come from environment variables only: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`. Copy `.env.example` for the full list. Iaso does not load `.env` files.
 
-Copy `.env.example` for the list of variables. Iaso does not load `.env` files; export the variables in your shell. Prices in `models.json` are unverified placeholders for now.
+For Docker Desktop on Mac, point it at the socket first:
+
+```sh
+export DOCKER_HOST=unix://$HOME/.docker/run/docker.sock
+```
+
+---
 
 ## Run it on a bug
 
-Iaso runs the agent in a Docker sandbox, so Docker must be running. On Docker Desktop for Mac, point it at the socket first: `export DOCKER_HOST=unix://$HOME/.docker/run/docker.sock`.
-
 ```sh
-# From a GitHub issue: Iaso reads the issue and clones the repo (read-only)
-export ANTHROPIC_API_KEY=...
-npx tsx src/cli.ts run --github https://github.com/OWNER/REPO/issues/123 --model anthropic:claude-haiku-5-5
+# From a GitHub issue
+iaso run --github https://github.com/owner/repo/issues/123 \
+         --model anthropic:claude-haiku-5-5
 
-# From a local repo and a bug report in a file
-npx tsx src/cli.ts run --repo ./my-project --issue ./bug.md
+# From a local repo and a bug report file
+iaso run --repo ./my-project --issue ./bug.md
 ```
 
-Each run writes a folder under `./runs/<runId>/` (change it with `--runs`) with `patch.diff` (the fix), `report.md` (status, steps, cost, and for GitHub runs the issue URL and commit), and `trajectory.jsonl`. Apply the patch to a checkout of the commit named in the report: `git apply runs/<runId>/patch.diff`. Iaso never pushes, opens a PR or comments on the issue; you review the patch and do that yourself.
+Each run writes to `./runs/<runId>/`. Apply the patch to a fresh clone at the commit named in `report.md`:
 
-`GITHUB_TOKEN` is optional. It raises the GitHub rate limit and lets Iaso read private repos. It stays on your machine and is never passed into the sandbox or stored in the clone. A cloned repo's `.iaso.json` is ignored unless you pass `--config`, because that file can pick the Docker image and add rules to the prompt. Only `/issues/N` URLs work; GitLab and Bitbucket are not supported yet.
+```sh
+git apply runs/<runId>/patch.diff
+```
 
-A run stops at its limits: `--max-steps` (default 50), `--max-cost` (default $1) and `--max-time` (default 20 minutes). A real repo with a slow test suite may need more, for example `--max-cost 2 --max-time 40`.
+Iaso never pushes, opens a PR, or comments on the issue. You review the patch and do that yourself.
 
-## Contribute a fix to an open-source project
+A run stops at its limits: `--max-steps` (default 50), `--max-cost` (default \$1), `--max-time` (default 20 minutes). Real repos with slow test suites may need more:
 
-Iaso never pushes code or opens a pull request on its own. You stay the author and answer for every PR; Iaso helps you get a reviewed patch and a draft, and sends it only when you add `--push` and type the repository's name.
+```sh
+iaso run --github <url> --max-cost 2 --max-time 40
+```
 
-0. **Find an issue (optional):** `iaso find --language typescript` searches GitHub (read-only) for open, unassigned "good first issue" issues in projects that are active and merge outside contributions: licence, at least 200 stars, 5 or more pull requests merged in the last 30 days and 2 or more from outside contributors. Each issue gets a score out of 100 with the reasons (a `bug` label counts for a fifth, since bugs are what Iaso fixes; `hacktoberfest` tasks and "Add new ..." data-entry requests are left out, only one issue per title pattern is kept, and copyleft licences such as AGPL are marked), and any that fail the claim check below are dropped. It first searches projects (stars, licence, not archived, pushed lately), then looks at their open issues, and measures only the projects that have an issue worth taking, so few calls are spent on tiny, closed or empty ones. `--label` (repeat it for several) chooses which issue labels count, any of them (default `good first issue`), and `--bugs-only` keeps only issues labelled as a bug, which is what Iaso fixes; for example `iaso find --label bug --label "help wanted" --bugs-only`. A request that looks like a feature (a title starting `feature:` or `feat:`, or an `enhancement` label) scores 10 lower. Without a `GITHUB_TOKEN` GitHub allows only 10 searches a minute and 60 other calls an hour, so it measures 6 projects and claim-checks 5 issues and a second run within the hour may be refused; with a token it measures 10 and checks 10. A token is optional and needs no permissions (a read-only fine-grained token is enough); it only gives more room. It spaces its searches out (about 6.5 seconds apart without a token, 3 with one), because GitHub refuses a burst, and if GitHub still says "too many requests too fast" it waits as long as GitHub asks and tries that search once more; a run takes about a minute and prints what it is doing on stderr. It reads numbers, not rules: it does not read a project's AI policy or contribution guide, and the score is no promise that a maintainer will answer. `--show-skipped` lists what was dropped and why; `--json` is for other programs.
-1. **Run it on a GitHub issue:** `iaso run --github <issue url>`. Before cloning or spending anything, Iaso checks (read-only) that nobody else is on the issue: it stops if the issue is closed, locked or assigned, if an open pull request from the last 90 days says it closes the issue, or if a pull request is linked on the issue page; it only warns about older or merely mentioning pull requests, earlier closed attempts, and comments like "I'll take this". There is no flag that overrides a stop. Then it reads the project's contribution rules from the clone: `CONTRIBUTING`, the PR template, any AI policy, `AGENTS.md`, plus commit style, DCO sign-off and CLA mentions. It saves them to `runs/<id>/conventions.json`. If the rules appear to forbid AI-generated code or contributions, it stops and quotes the lines. This is keyword matching, so it can miss a rule or misread a sentence: read the project's rules yourself too.
-2. **Check the patch yourself.** `runs/<id>/patch.diff` is the fix, `report.md` says what the agent did. Apply it to a fresh clone, run the project's own tests and linter, and confirm the new tests fail without the fix. The agent's own test notes and its confidence are not evidence.
-3. **Draft the PR:** `iaso pr <runId>` shows the files, the full diff, what the project asks of you (CLA, sign-off, changelog, AI policy) and a draft title and body, saved as `runs/<id>/pr-draft.md`. On its own it does not change anything on GitHub. The title and summary are the agent's, and the choices it says the issue left open are listed behind a `[TODO]` marker for you to check. Anything only you can say (that you reviewed the change, that you ran the tests, that an AI helped) is a `[TODO]` marker, and no checkbox in the project's template is ticked. Read and edit the draft: the generated title and summary are a starting point and are often not good enough to send as they are.
-4. **Open it:** once every `[TODO]` marker is resolved, run `iaso pr <runId> --push`. It lists what it will do (fork, push one branch to your fork, open a draft PR), then asks you to type `owner/repo`; anything else cancels, and no flag skips the question. It needs `gh` logged in. The commit is by your git name and your GitHub no-reply address (`--name` and `--email` change that), with a `Signed-off-by` line if the project asks for one. It looks at the issue again just before asking (someone may have taken it since the run), and stops if it is now closed, assigned, or being fixed by another pull request. It refuses while a marker is left, after two PRs to the same repo in 24 hours (counted in `runs/oss-log.jsonl`), and for a run that already has a PR. The PR is always a draft: you mark it ready yourself.
+`GITHUB_TOKEN` is optional. Without one, GitHub allows 60 API calls an hour; with one (read-only fine-grained token), you get 5,000. The token stays on your machine and is never passed into the sandbox or stored in the clone.
 
-Be a considerate contributor: pick an issue nobody has claimed (no assignee, no linked PR), read the project's rules, and open one PR at a time. Maintainers can be slow to respond.
+---
+
+## Find open-source issues to fix
+
+`iaso find` searches GitHub for open, unassigned `good first issue` bugs in projects that actively merge outside contributions.
+
+```sh
+iaso find --language typescript
+iaso find --label bug --label "help wanted" --bugs-only
+```
+
+It searches repositories first (stars, licence, activity), then fetches open issues only for projects worth measuring, to stay inside GitHub's rate limits. Each issue gets a score out of 100 with the reasons: activity (30 pts), outside merge rate (20 pts), bug label (20 pts), freshness (10 pts), comment count (10 pts), stars (10 pts). Features score 10 lower. Data-entry chores (`hacktoberfest`, "Add new ...") are dropped entirely.
+
+It then runs the same claim check as `iaso run`: any issue with an open PR that says it closes it is dropped from the list. `--show-skipped` shows what was cut and why.
+
+Without a `GITHUB_TOKEN`, GitHub caps at 60 calls an hour and Iaso measures 6 projects; with one, it measures 10. Searches are paced (about 6.5 s apart without a token, 3 s with one) because GitHub rejects bursts, and if it still rate-limits, Iaso waits however long GitHub asks and retries that search once.
+
+---
+
+## Open a pull request
+
+After a successful run:
+
+```sh
+iaso pr <runId>          # shows the diff, what the project asks of you, and a draft PR title + body
+iaso pr <runId> --push   # forks, pushes, and opens a draft PR (requires gh logged in)
+```
+
+`iaso pr` on its own changes nothing. It shows:
+
+- File list with +/- counts
+- Full diff
+- Project requirements (CLA, DCO sign-off, changelog, AI policy excerpts)
+- A draft title and body, saved to `runs/<id>/pr-draft.md`
+
+The draft always has `[TODO]` markers for anything only you can say: that you reviewed the patch, that you ran the tests, that an AI helped. No template checkbox is ticked. `iaso pr --push` refuses to continue while any `[TODO]` remains.
+
+When you do run `--push`, it asks you to type `owner/repo` before touching anything. It won't open more than 2 PRs to the same repo in 24 hours. The PR is always opened as a draft; you mark it ready yourself.
+
+---
 
 ## Replay a run
 
 ```sh
-npx tsx src/cli.ts replay <runId>                 # print the trajectory
-npx tsx src/cli.ts replay <runId> --context 12    # print what the model saw at step 12
+iaso replay <runId>                # print the full trajectory
+iaso replay <runId> --context 12   # print what the model saw at step 12
 ```
+
+---
 
 ## Benchmark
 
-`iaso bench` runs a seeded sample of SWE-bench Lite in Docker, using the official per-instance images with the network cut for the agent. It writes `predictions.jsonl`, grades it with the official SWE-bench harness, and writes `results.md`. It has no default size because it costs money: you must pass `--sample <n>`.
+`iaso bench` runs a seeded sample of SWE-bench Lite in Docker using the official per-instance images, grades with the official harness, and writes `predictions.jsonl` and `results.md`. `--sample` is required (no default, because it costs money).
 
 ```sh
-npx tsx src/cli.ts bench --sample 10 --seed 42 --model anthropic:claude-haiku-5-5 --max-cost 1
+iaso bench --sample 10 --seed 42 \
+           --model anthropic:claude-haiku-5-5 \
+           --max-cost 1
 ```
 
-The first run creates a Python venv at `~/.iaso/swebench-venv` and installs the pinned harness there (Python 3.10 or newer is needed). Each instance image is about 1 GB and is removed after its task unless you pass `--keep-images`; grading downloads them again. Run one task at a time on a laptop: each sandbox may use 4 GB.
+One real run of that command on this codebase: **7 of 10 resolved (95% CI 40%–89%)**, \$1.02 total, mean \$0.10 per task. Ten tasks is a small sample, so the interval is wide; this doesn't meet or miss the spec target of 80% on 50 tasks. The three failures all applied a correct patch; the hidden tests asserted behaviour the issue text never mentioned.
 
-The folder is named from the options (`runs/bench-swebench-lite-<model>-seed42-n10`), so the same command finds it again. A crashed run continues with `--resume`. Pass `--no-evaluate` to skip grading.
+The first run creates a Python venv at `~/.iaso/swebench-venv` and pins the harness there (needs Python 3.10+). Instance images are roughly 1 GB each and are removed after each task unless you pass `--keep-images`. Run one task at a time on a laptop; each sandbox can use 4 GB.
 
-One real run of that command: **7 of 10 resolved (95% confidence interval 40%-89%)**, for $1.02 in total (mean $0.10 per task). Ten tasks is a small sample, so that range is wide.
+A crashed run continues with `--resume`. The folder name encodes the options (`runs/bench-swebench-lite-<model>-seed42-n10`), so the same command finds the right folder automatically. `--max-total-cost <usd>` caps the whole bench run; `--resume` can't go past it.
 
-Use `--max-total-cost <usd>` to cap the whole bench: it stops starting tasks when too little is left, holds a running task to what remains, and counts earlier spending in the folder, so `--resume` cannot go past it. Tasks that never started get no record, and `--resume` with a higher limit runs them. `results.md` marks such a run as partial.
-
-Other options: `--concurrency`, `--plan-model`, `--compact-model`, `--no-plan`, `--max-steps`, `--max-cost` (per task), `--max-time`, `--out`, `--resume`, `--keep-images`, `--refresh`, `--max-total-cost`, `--no-evaluate`. See `iaso bench --help`.
+---
 
 ## Project config
 
-A repo can carry a `.iaso.json` with optional `image`, `installCommand`, `testCommand`, `relatedTestsPattern`, `extraRules` and `services`. Pass it with `--config`; it is read automatically for local repos only.
+A repo can carry a `.iaso.json`:
+
+```json
+{
+  "image": "node:22-bookworm",
+  "installCommand": "npm ci",
+  "testCommand": "npm test",
+  "relatedTestsPattern": "test/{name}.test.ts",
+  "extraRules": ["Always run tests before submitting."],
+  "services": []
+}
+```
+
+Pass it with `--config`. For local repos, it's loaded automatically; for cloned repos, it's ignored unless you pass `--config` (a project's config can influence the Docker image and prompt, so it isn't trusted without an explicit opt-in).
+
+---
 
 ## Layout
 
 ```
 src/
-  cli.ts          entry point (commander)
-  commands/       models, run/plan, replay, bench, pr
-  agent/          loop, plan phase, pipeline, prompts, report, budget
-  context/        token budget, shaping, staleness, loops, compaction, layers
-  providers/      Anthropic, OpenAI-compatible, mock, registry, retry
-  sandbox/        Docker sandbox, images, prebuilt SWE-bench images
-  sources/        local repo, GitHub issue, SWE-bench loader
-  tools/          bash, read_file, edit_file, notes, submit, submit_plan
-  telemetry/      cost and trajectory logging
-  bench/          benchmark runner, harness call, results
-  oss/            project contribution rules and AI-policy reading
-test/             unit tests, plus opt-in integration, live and net tests
-models.json       model catalogue
+  cli.ts           entry point (commander)
+  commands/        models, run/plan, replay, bench, find, pr
+  agent/           loop, plan phase, pipeline, prompts, report, budget
+  context/         token budget, shaping, staleness, loop detection, compaction
+  providers/       Anthropic, OpenAI-compatible, mock, registry, retry
+  sandbox/         Docker sandbox, images, prebuilt SWE-bench images
+  sources/         local repo, GitHub issue, SWE-bench loader
+  tools/           bash, read_file, edit_file, notes, submit, submit_plan
+  telemetry/       cost tracking and trajectory logging
+  bench/           benchmark runner, harness call, results
+  oss/             contribution rules, AI-policy reading, claim check, publisher
+test/              unit tests + opt-in integration, live and net tests
+models.json        model catalogue
 ```
+
+---
 
 ## Development
 
@@ -108,19 +211,44 @@ npm test
 npm run build
 ```
 
-Two test groups are off by default because they need outside resources:
+Two test groups are off by default:
 
 ```sh
-# Real Docker (needs a running daemon; the first run pulls a ~1 GB image)
+# Real Docker (needs a running daemon; first run pulls ~1 GB image)
 IASO_DOCKER=1 npx vitest run test/integration
 
-# Real model API (costs a few cents; needs ANTHROPIC_API_KEY in your environment)
+# Real model API (costs a few cents; needs ANTHROPIC_API_KEY)
 IASO_LIVE=1 npx vitest run test/live
 
-# github.com (reads one public issue and clones its repo; a GITHUB_TOKEN raises the rate limit)
+# GitHub (reads one public issue and clones its repo)
 IASO_NET=1 npx vitest run test/net
 ```
 
-Progress and the build plan are tracked in `PROGRESS.md`.
+Progress and the full build plan: `PROGRESS.md`.
 
-License: MIT (declared in `package.json`; there is no LICENSE file yet).
+---
+
+## Design decisions worth knowing
+
+**The agent never pushes code.** `iaso pr --push` exists and works, but it asks you to type `owner/repo` by hand before touching GitHub. There's no flag that skips this.
+
+**AI-ban stops are hard.** If a project's contribution rules appear to ban AI-generated code, the run stops before any model call or sandbox is started. No override flag. The check is keyword matching on single lines, so it can miss rules written in unusual ways; reading the project's rules yourself is still necessary.
+
+**Token budget is explicit.** Every model call has a cost; every cost check runs before the next step. The compactor (a cheaper model that summarises old steps) has its own cost tracked separately. When a run ends on budget, the diff it had so far is still written to disk.
+
+**Context compaction keeps `failedApproaches`.** The compaction schema has a `failedApproaches` field that is never dropped. If the agent tried something and it didn't work, that fact survives every compaction round so the agent doesn't loop back to the same dead end.
+
+**Trajectory is append-only.** Each step appends one JSON line to `trajectory.jsonl` immediately after the model call returns. A crash, OOM, or Docker timeout loses at most one step; everything before it is on disk and replayable.
+
+---
+
+## What's next
+
+- Web UI (in progress): `iaso server` serving a React frontend — run history, live step feed, diff viewer, trajectory explorer
+- Gemini provider (M8)
+- Podman + unsafe local mode without Docker (M9)
+- Larger benchmark run (50 tasks)
+
+---
+
+License: MIT
