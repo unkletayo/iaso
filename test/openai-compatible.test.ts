@@ -212,3 +212,65 @@ describe("OpenAICompatibleProvider retry", () => {
     expect(bad).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("OpenAICompatibleProvider: effort", () => {
+  it("sends reasoning_effort only when asked", async () => {
+    const create = fake();
+    await new OpenAICompatibleProvider(openai, create).chat({ ...req, effort: "high" });
+    expect(create.mock.calls[0]?.[0]).toMatchObject({ reasoning_effort: "high" });
+    await new OpenAICompatibleProvider(openai, create).chat(req);
+    expect(create.mock.calls[1]?.[0]).not.toHaveProperty("reasoning_effort");
+  });
+});
+
+describe("OpenAICompatibleProvider: streaming", () => {
+  const status = (code: number) =>
+    Object.assign(new Error(`http ${String(code)}`), { status: code });
+
+  function fakeStream(deltas: string[], final: Promise<Completion>) {
+    const seen: Record<string, unknown>[] = [];
+    const stream = vi.fn((params: Record<string, unknown>) => {
+      seen.push(params);
+      return {
+        on: (_event: "content", listener: (delta: string) => void) => {
+          for (const d of deltas) listener(d);
+        },
+        finalChatCompletion: () => final,
+      };
+    });
+    return { stream, seen };
+  }
+
+  it("streams with token counts asked for, and never sends a plain request", async () => {
+    const create = fake();
+    const { stream, seen } = fakeStream(["o", "k"], Promise.resolve(completion({ content: "ok" })));
+    const got: string[] = [];
+    const res = await new OpenAICompatibleProvider(ollama, create, {}, stream).chat(req, {
+      onText: (d) => got.push(d),
+    });
+    expect(got).toEqual(["o", "k"]);
+    expect(res.content).toEqual([{ type: "text", text: "ok" }]);
+    expect(res.usage).toEqual({ inputTokens: 120, outputTokens: 30, cachedInputTokens: 80 });
+    expect(create).not.toHaveBeenCalled();
+    expect(seen[0]?.stream_options).toEqual({ include_usage: true });
+    expect(seen[0]?.model).toBe("qwen");
+  });
+
+  it("sends a plain request without a listener, and that request asks for no stream", async () => {
+    const create = fake();
+    const { stream } = fakeStream([], Promise.resolve(completion({ content: "ok" })));
+    await new OpenAICompatibleProvider(ollama, create, {}, stream).chat(req);
+    expect(stream).not.toHaveBeenCalled();
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty("stream_options");
+  });
+
+  it("does not retry a stream that breaks after text was handed out", async () => {
+    const { stream } = fakeStream(["partial"], Promise.reject(status(503)));
+    await expect(
+      new OpenAICompatibleProvider(ollama, fake(), fast, stream).chat(req, {
+        onText: () => undefined,
+      }),
+    ).rejects.toThrow(/stream broke after it started/);
+    expect(stream).toHaveBeenCalledTimes(1);
+  });
+});

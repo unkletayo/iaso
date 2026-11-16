@@ -645,3 +645,29 @@ describe("runLoop: compaction", () => {
     expect(s.provider.requests.at(-1)?.messages).toHaveLength(1 + 7 * 2);
   });
 });
+
+describe("runLoop: effort", () => {
+  it("puts the effort on every request, and none when unset", async () => {
+    const with_ = setup([bashCall("a"), submitCall()], { effort: "low" });
+    await with_.run();
+    expect(with_.provider.requests.map((r) => r.effort)).toEqual(["low", "low"]);
+    const without = setup([submitCall()]);
+    await without.run();
+    expect(without.provider.requests[0]).not.toHaveProperty("effort");
+  });
+});
+
+describe("runLoop: streaming", () => {
+  it("hands the model's text out as it is written, with the step it belongs to", async () => {
+    const got: [string, number][] = [];
+    const s = setup(
+      [
+        mockToolCall("c1", "bash", { cmd: "ls" }, [{ type: "text", text: "Looking around." }]),
+        submitCall(),
+      ],
+      { onText: (delta, step) => got.push([delta, step]) },
+    );
+    await s.run();
+    expect(got).toEqual([["Looking around.", 1]]);
+  });
+});
