@@ -22,7 +22,8 @@ const DEFAULT_TIMEOUT_SEC = 120;
 const MAX_CAPTURE_BYTES = 5 * 1024 * 1024;
 /** Must stay below the capture cap so `readFile` can never return truncated content. */
 const MAX_READ_BYTES = 4 * 1024 * 1024;
-const BASELINE_TAG = "iaso-baseline";
+/** Tag on the starting commit. `diff()` and the post-run check compare against it. */
+export const BASELINE_TAG = "iaso-baseline";
 
 export interface ContainerSpec {
   name: string;
@@ -32,6 +33,8 @@ export interface ContainerSpec {
   env?: readonly string[];
   /** Capabilities to keep. Everything else is dropped. */
   capAdd?: readonly string[];
+  /** e.g. `linux/amd64`. Omitted: the host's own. */
+  platform?: string;
 }
 
 export interface RawExecResult {
@@ -42,7 +45,8 @@ export interface RawExecResult {
 
 /** The slice of Docker that `DockerSandbox` needs. Tests fake it; `dockerodeApi` implements it. */
 export interface DockerApi {
-  ensureImage: (image: string) => Promise<void>;
+  /** Pull the image if it is missing, for `platform` when given. */
+  ensureImage: (image: string, platform?: string) => Promise<void>;
   createContainer: (spec: ContainerSpec) => Promise<string>;
   startContainer: (id: string) => Promise<void>;
   /** Extract a tar stream into `destDir` (which must exist). */
@@ -93,11 +97,13 @@ export class DockerSandbox implements Sandbox {
     }
     this.unregister = registerForCleanup(this);
     try {
-      await this.api.ensureImage(this.image);
+      const platform = this.opts.prebuilt?.platform;
+      await this.api.ensureImage(this.image, platform);
       this.containerId = await this.api.createContainer({
         name: this.name,
         image: this.image,
         runId: this.opts.runId,
+        ...(platform === undefined ? {} : { platform }),
         ...(this.opts.prebuilt === undefined
           ? {}
           : { env: this.opts.prebuilt.env, capAdd: [SETUP_CAPABILITY] }),
@@ -295,14 +301,14 @@ function isStatus(err: unknown, status: number): boolean {
 /** Real Docker, through dockerode. Covered by the opt-in integration tests (IASO_DOCKER=1). */
 export function dockerodeApi(docker: Docker = new Docker()): DockerApi {
   return {
-    async ensureImage(image) {
+    async ensureImage(image, platform) {
       try {
         await docker.getImage(image).inspect();
         return;
       } catch (err) {
         if (!isStatus(err, 404)) throw err;
       }
-      const stream = await docker.pull(image);
+      const stream = await docker.pull(image, platform === undefined ? {} : { platform });
       await new Promise<void>((resolve, reject) => {
         docker.modem.followProgress(stream, (err: Error | null) => {
           if (err) reject(err);
@@ -314,6 +320,7 @@ export function dockerodeApi(docker: Docker = new Docker()): DockerApi {
     async createContainer(spec) {
       const container = await docker.createContainer({
         name: spec.name,
+        ...(spec.platform === undefined ? {} : { platform: spec.platform }),
         Image: spec.image,
         Cmd: ["sleep", "infinity"],
         User: SANDBOX_USER,

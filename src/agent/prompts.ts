@@ -2,7 +2,7 @@
  * Bump on any change to the text below, or to what the model is shown (submit fields, the phase
  * a fix run starts in). Logged on every trajectory line (spec §9).
  */
-export const PROMPT_VERSION = "1.0.1";
+export const PROMPT_VERSION = "1.0.2";
 
 /** Spec §9, verbatim. */
 const BASE_PROMPT = `You are an expert software engineer fixing a bug in the repository at /repo.
@@ -31,7 +31,7 @@ const PHASES = `Phases, in order:
 
 /** Spec §7A point 3: how the agent uses its notes. */
 const NOTES = `Notes:
-Your context is trimmed as the run goes on. Use the notes tool to keep what matters: your current phase, your root cause hypothesis, facts you have confirmed, files you examined, tests you ran, and your todo list. Always record an approach that failed and why it failed, so you do not try it again. Your notes are shown to you at the start of every turn.`;
+Your context is trimmed as the run goes on. Use the notes tool to keep what matters: your current phase, your root cause hypothesis, facts you have confirmed, files you examined, tests you ran, and your todo list. Always record an approach that failed and why it failed, so you do not try it again. Your notes are shown to you after the latest tool results, every turn.`;
 
 /**
  * Build the system prompt. Same input gives the same bytes, so prompt caching works.

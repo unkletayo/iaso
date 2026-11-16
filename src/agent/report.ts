@@ -3,27 +3,36 @@ import { join } from "node:path";
 import { z } from "zod";
 import { type PipelineResult } from "./pipeline.js";
 import { renderPlan } from "./plan.js";
+import { type NetworkState, describeNetwork, networkStateSchema } from "../sandbox/install.js";
+import { type Verification, describeCheck, verificationSchema } from "./verify.js";
 
 export interface ReportInput {
   runId: string;
   issue: string;
   model: string;
   planModel?: string;
+  /** The `--effort` given, when the model accepted it. */
+  effort?: string;
   /** Where the issue and repository came from. */
   source?: { label: string; issueUrl?: string; commit?: string };
   elapsedMs: number;
   result: PipelineResult;
+  /** Iaso's own check of the patch after the run (M13 step 13A). */
+  verification?: Verification;
+  /** Whether the sandbox network was cut after install (M13 step 13D). */
+  network?: NetworkState;
 }
 
 /**
  * `run.json`: the facts about a run that other commands (`iaso pr`) need, so they never have to read
  * them out of the prose in `report.md`. `testsRun` is what the agent noted with its `notes` tool,
- * not something Iaso checked.
+ * not something Iaso checked; `verification` is what Iaso checked itself.
  */
 export const runInfoSchema = z.object({
   runId: z.string(),
   model: z.string(),
   planModel: z.string().optional(),
+  effort: z.string().optional(),
   status: z.string(),
   steps: z.number(),
   costUsd: z.number(),
@@ -42,6 +51,10 @@ export const runInfoSchema = z.object({
   confidence: z.enum(["low", "medium", "high"]).optional(),
   testsRun: z.array(z.object({ cmd: z.string(), result: z.string(), step: z.number() })),
   patchBytes: z.number(),
+  /** Absent in runs made before step 13A. */
+  verification: verificationSchema.optional(),
+  /** Absent in runs made before step 13D. */
+  network: networkStateSchema.optional(),
 });
 export type RunInfo = z.infer<typeof runInfoSchema>;
 
@@ -52,6 +65,7 @@ export function runInfoOf(input: ReportInput): RunInfo {
     runId: input.runId,
     model: input.model,
     ...(input.planModel === undefined ? {} : { planModel: input.planModel }),
+    ...(input.effort === undefined ? {} : { effort: input.effort }),
     status: input.result.status,
     steps: input.result.steps,
     costUsd: input.result.costUsd,
@@ -70,7 +84,27 @@ export function runInfoOf(input: ReportInput): RunInfo {
     testsAdded: sub?.testsAdded ?? [],
     testsRun: input.result.fix?.state.testsRun ?? [],
     patchBytes: Buffer.byteLength(input.result.diff),
+    ...(input.verification === undefined ? {} : { verification: input.verification }),
+    ...(input.network === undefined ? {} : { network: input.network }),
   };
+}
+
+function renderVerification(v: Verification): string[] {
+  const lines = [
+    `status: ${v.status}`,
+    "",
+    `- ${describeCheck("reproduction", v.reproduction)}`,
+    `- ${describeCheck("suite", v.suite)}`,
+  ];
+  for (const [name, check] of [
+    ["reproduction", v.reproduction],
+    ["suite", v.suite],
+  ] as const) {
+    if (check.status === "fail" && check.tail !== "") {
+      lines.push("", `Last lines of the ${name} check:`, "", fence("", check.tail));
+    }
+  }
+  return lines;
 }
 
 const fence = (lang: string, body: string): string => {
@@ -89,9 +123,12 @@ export function renderReport({
   issue,
   model,
   planModel,
+  effort,
   source,
   elapsedMs,
   result,
+  verification,
+  network,
 }: ReportInput): string {
   const state = result.fix?.state;
   const sub = result.fix?.submission;
@@ -104,10 +141,11 @@ export function renderReport({
           `- source: ${source.label}${source.issueUrl ? ` (${source.issueUrl})` : ""}${source.commit ? `, commit ${source.commit}` : ""}`,
         ]
       : []),
-    `- model: ${model}${planModel && planModel !== model ? `, plan model: ${planModel}` : ""}`,
+    `- model: ${model}${planModel && planModel !== model ? `, plan model: ${planModel}` : ""}${effort === undefined ? "" : `, effort: ${effort}`}`,
     `- steps: ${String(result.steps)} (plan ${String(result.planSteps)})`,
     `- cost: $${result.costUsd.toFixed(4)} (plan $${result.planCostUsd.toFixed(4)})`,
     `- time: ${(elapsedMs / 1000).toFixed(1)}s`,
+    ...(network ? [`- network: ${describeNetwork(network)}`] : []),
     "",
     "## Issue",
     "",
@@ -134,6 +172,9 @@ export function renderReport({
       "",
       bullets(state.failedApproaches.map((f) => `${f.what}: ${f.whyItFailed}`)),
     );
+  }
+  if (verification) {
+    lines.push("", "## Checked by Iaso after the run", "", ...renderVerification(verification));
   }
   lines.push(
     "",

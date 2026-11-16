@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import type { Command } from "commander";
 import { z } from "zod";
 import { type RunInfo, runInfoSchema } from "../agent/report.js";
+import { describeCheck } from "../agent/verify.js";
 import {
   MAX_PRS_PER_REPO_PER_DAY,
   TODO_MARK,
@@ -151,13 +152,18 @@ export function buildDraft(
       ].join("\n"),
     );
   }
-  sections.push(
-    [
-      "## Testing",
-      added,
-      `${TODO_MARK}: run the project's own tests and lint yourself, then replace this line with what you ran and saw]`,
-    ].join("\n"),
+  const testing = ["## Testing", added];
+  // A failed check is never quoted as a result; it blocks the draft until a person deals with it.
+  if (info.verification?.status === "failed") {
+    testing.push(
+      `${TODO_MARK}: Iaso's own check after the run failed (see report.md). Fix the patch or ` +
+        "explain why the check is wrong, then delete this line]",
+    );
+  }
+  testing.push(
+    `${TODO_MARK}: run the project's own tests and lint yourself, then replace this line with what you ran and saw]`,
   );
+  sections.push(testing.join("\n"));
   if (conventions?.aiPolicy.requiresDisclosure) {
     sections.push(
       [
@@ -189,6 +195,11 @@ export function buildDraft(
       : `The agent noted these test runs (unchecked, and earlier ones may be from before the fix): ${info.testsRun
           .map((t) => `${t.cmd} (${t.result})`)
           .join(", ")}.`,
+    info.verification === undefined
+      ? "Iaso did not check this patch after the run (the run is older than the check)."
+      : `Iaso's check after the run: ${info.verification.status}. ` +
+        `${describeCheck("Reproduction", info.verification.reproduction)}. ` +
+        `${describeCheck("Suite", info.verification.suite)}.`,
   ];
   if (conventions === undefined) {
     reminders.push(

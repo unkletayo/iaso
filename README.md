@@ -29,6 +29,8 @@ If the rules pass, it spins up a Docker sandbox, runs the agent loop, and writes
 - `report.md` — what it did, the plan, every test run, cost, step count
 - `run.json` — structured metadata for `iaso pr`
 
+Before writing them, Iaso checks a submitted patch itself instead of taking the agent's word. It re-runs the agent's passing test command with the fix (it must pass) and on the original code with only the new test files kept (it must fail), and runs `testCommand` from `.iaso.json` when one is set. The result (`verified`, `failed` or `not_checked`, each with its reason) goes into `report.md` and `run.json`. A failed check is only reported, never retried, and it puts a `[TODO]` marker in the `iaso pr` draft.
+
 You apply the patch, run the tests yourself, and open the PR if it looks good.
 
 ---
@@ -41,7 +43,7 @@ Planning is a separate model call with read-only bash access. The agent reads th
 
 Each step, the agent can call `bash`, `read_file`, `edit_file`, `notes` (to record facts, test results, and failed approaches), and `submit` (to end the run). Token usage is tracked per step. When the context window fills up, a cheaper model compacts older steps into a rolling summary with a fixed schema: `learned`, `files`, `tests`, `failedApproaches` — no information is ever discarded silently.
 
-If the agent repeats the same bash command or the same edit three times, it's nudged. At five identical repetitions, the run ends as `stuck`. Cost, step count, and time each have hard limits; the defaults are \$1, 50 steps, and 20 minutes.
+If the agent repeats the same bash command or the same edit three times, it's nudged. At five identical repetitions, the run ends as `stuck`. Cost, step count, and time each have hard limits; the defaults are \$1, 50 steps, and 20 minutes. The time limit also holds inside a step: a command's timeout is cut to the time left, and a model call (retries included) is cancelled when the time runs out.
 
 A run writes one trajectory step per line to `trajectory.jsonl` as it goes, so a crash doesn't lose earlier work, and `iaso replay` can reconstruct exactly what the model saw at any step.
 
@@ -86,7 +88,7 @@ git apply runs/<runId>/patch.diff
 
 Iaso never pushes, opens a PR, or comments on the issue. You review the patch and do that yourself.
 
-A run stops at its limits: `--max-steps` (default 50), `--max-cost` (default \$1), `--max-time` (default 20 minutes). Real repos with slow test suites may need more:
+A run stops at its limits: `--max-steps` (default 50), `--max-cost` (default \$1), `--max-time` (default 20 minutes). `--effort <low|medium|high|xhigh|max>` sets how hard the model thinks in the plan and fix phases; without it the model's own default applies. Models that take no such setting (see `effort` in `models.json`) ignore it with a note. Real repos with slow test suites may need more:
 
 ```sh
 iaso run --github <url> --max-cost 2 --max-time 40
@@ -176,6 +178,8 @@ A repo can carry a `.iaso.json`:
   "services": []
 }
 ```
+
+With an `installCommand`, Iaso runs it in the sandbox before any model call, then turns the sandbox's network off for the rest of the run, so code in the repo or text planted in the issue can't send anything out; the model is told the network is off. Without one, the agent may need to install things itself, so the network stays on, and `report.md` says which happened. A failed install stops the run before anything is spent on the model.
 
 Pass it with `--config`. For local repos, it's loaded automatically; for cloned repos, it's ignored unless you pass `--config` (a project's config can influence the Docker image and prompt, so it isn't trusted without an explicit opt-in).
 

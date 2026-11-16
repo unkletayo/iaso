@@ -96,6 +96,46 @@ describe("buildRequest", () => {
     expect(a?.content[2]).not.toEqual(b?.content[2]);
   });
 
+  it("with history, ends the newest message with the notes and puts a breakpoint just before them", () => {
+    const { request, volatileTokens } = buildRequest({
+      ...base,
+      plan: "P",
+      history: [...step(1), ...step(2)],
+    });
+    expect(firstText(request.messages[0])).not.toContain("## Your notes");
+    const last = request.messages.at(-1)?.content ?? [];
+    expect(last).toHaveLength(2);
+    expect(last[0]).toMatchObject({ type: "tool_result", output: "out2", cacheBreakpoint: true });
+    expect(last[1]).toMatchObject({ type: "text" });
+    expect(firstText(request.messages.at(-1))).toContain("## Your notes");
+    expect(volatileTokens).toBeGreaterThan(0);
+  });
+
+  it("keeps the previous request's cached prefix unchanged on the next step", () => {
+    const state = mergeTaskState(emptyTaskState(), { todo: ["a"] }, 1);
+    const before = buildRequest({ ...base, plan: "P", state, history: step(1) }).request.messages;
+    const after = buildRequest({
+      ...base,
+      plan: "P",
+      state: mergeTaskState(state, { todo: ["b"] }, 2),
+      workingSet: [{ path: "/repo/a.js", content: "x\n" }],
+      history: [...step(1), ...step(2)],
+    }).request.messages;
+    // Up to and including the block that carried the breakpoint, the bytes are the same.
+    const results = (m: (typeof before)[number] | undefined) =>
+      m?.content.flatMap((b) => (b.type === "tool_result" ? [[b.id, b.output]] : []));
+    expect(after[0]).toEqual(before[0]);
+    expect(after[1]).toEqual(before[1]);
+    expect(results(after[2])).toEqual(results(before[2]));
+  });
+
+  it("never marks more than 3 breakpoints in the messages (the system prompt takes the 4th)", () => {
+    const history = Array.from({ length: 5 }, (_, i) => step(i + 1)).flat();
+    const { request } = buildRequest({ ...base, plan: "P", compactedSummary: "S", history });
+    const marks = request.messages.flatMap((m) => m.content).filter((b) => "cacheBreakpoint" in b);
+    expect(marks).toHaveLength(3);
+  });
+
   it("numbers steps from firstStep when marking outdated reads", () => {
     const history = [
       ...step(1, "read_file", { path: "a.js" }, "OLD FILE"),
@@ -129,7 +169,7 @@ describe("buildRequest", () => {
     expect(res.omittedSteps).toBe(4);
     expect(res.request.messages).toHaveLength(1 + 16);
     expect(res.request.messages[1]?.role).toBe("assistant");
-    expect(firstText(res.request.messages[0])).toContain("[4 earlier steps are not shown.");
+    expect(firstText(res.request.messages.at(-1))).toContain("[4 earlier steps are not shown.");
     const lastResult = res.request.messages.at(-1)?.content[0];
     expect(lastResult).toMatchObject({ type: "tool_result", output: "out12" });
   });
