@@ -13,6 +13,7 @@ import {
 import { renderPlan } from "../agent/plan.js";
 import { writeReport } from "../agent/report.js";
 import { describeCheck, notVerified, verifyRun } from "../agent/verify.js";
+import { OFFLINE_RULE, installThenCutNetwork } from "../sandbox/install.js";
 import { BUDGET_DEFAULTS, type BudgetLimits, IasoConfigSchema, loadConfig } from "../config.js";
 import { type Catalogue, findModel, loadCatalogue } from "../models.js";
 import {
@@ -28,7 +29,7 @@ import {
   claimMessage,
   describeClaim,
 } from "../oss/claim.js";
-import type { ModelProvider } from "../providers/types.js";
+import { EFFORT_LEVELS, type Effort, type ModelProvider } from "../providers/types.js";
 import { createProvider } from "../providers/registry.js";
 import { DockerSandbox } from "../sandbox/docker.js";
 import type { Sandbox } from "../sandbox/types.js";
@@ -46,6 +47,8 @@ export interface RunCommandOptions {
   model: string;
   planModel?: string;
   compactModel?: string;
+  /** Reasoning effort for the plan and fix phases. The compactor never gets it. */
+  effort?: Effort;
   approvePlan?: boolean;
   /** False with `--no-plan`. */
   plan: boolean;
@@ -139,9 +142,23 @@ export function defaultDeps(): CommandDeps {
 export const newRunId = (now: Date = new Date()): string =>
   `${now.toISOString().replace(/[-:]/g, "").slice(0, 15)}-${randomBytes(2).toString("hex")}`;
 
-function setupFor(id: string, deps: CommandDeps): PhaseSetup {
+function setupFor(id: string, deps: CommandDeps, effort?: Effort): PhaseSetup {
   const entry = findModel(loadCatalogue(), id);
-  return { provider: deps.createProvider(id), prices: entry, contextWindow: entry.contextWindow };
+  if (effort !== undefined && !entry.effort) {
+    deps.log(`${id} takes no reasoning-effort setting; --effort ${effort} is ignored for it`);
+  }
+  return {
+    provider: deps.createProvider(id),
+    prices: entry,
+    contextWindow: entry.contextWindow,
+    ...(effort !== undefined && entry.effort ? { effort } : {}),
+  };
+}
+
+/** Commander argument parser for `--effort`. */
+export function parseEffort(value: string): Effort {
+  if ((EFFORT_LEVELS as readonly string[]).includes(value)) return value as Effort;
+  throw new InvalidArgumentError(`--effort must be one of ${EFFORT_LEVELS.join(", ")}`);
 }
 
 /** The cheapest tool-calling model of the same provider, by input plus output price. */
@@ -160,8 +177,8 @@ export async function executeCommand(
   deps: CommandDeps,
 ): Promise<void> {
   const choice = chooseSource(opts);
-  const fix = setupFor(opts.model, deps);
-  const plan = opts.planModel === undefined ? fix : setupFor(opts.planModel, deps);
+  const fix = setupFor(opts.model, deps, opts.effort);
+  const plan = opts.planModel === undefined ? fix : setupFor(opts.planModel, deps, opts.effort);
   const limits: BudgetLimits = {
     maxSteps: opts.maxSteps,
     maxCostUsd: opts.maxCost,
@@ -262,6 +279,7 @@ async function runWithSource(
   });
   await sandbox.start();
   try {
+    const network = await installThenCutNetwork(sandbox, config.installCommand, deps.log);
     if (mode === "plan") {
       const stage = await runPlanPhase({
         fix,
@@ -286,7 +304,8 @@ async function runWithSource(
       issue,
       limits,
       runDir,
-      extraRules: config.extraRules,
+      extraRules:
+        network.network === "off" ? [...config.extraRules, OFFLINE_RULE] : config.extraRules,
       usePlan: opts.plan,
       ...(review ? { review } : {}),
     });
@@ -316,9 +335,11 @@ async function runWithSource(
       },
       model: opts.model,
       ...(opts.planModel === undefined ? {} : { planModel: opts.planModel }),
+      ...(fix.effort === undefined ? {} : { effort: fix.effort }),
       elapsedMs: Date.now() - started,
       result,
       verification,
+      network,
     });
     if (result.status === "submitted") {
       deps.log(`check: ${verification.status}`);
@@ -357,6 +378,11 @@ function addCommonOptions(cmd: Command): Command {
     )
     .option("--model <id>", "model for reproduce, fix, verify", DEFAULT_MODEL)
     .option("--plan-model <id>", "model for the plan phase (default: --model)")
+    .option(
+      "--effort <level>",
+      `reasoning effort for the plan and fix phases: ${EFFORT_LEVELS.join(", ")} (default: the model's own)`,
+      parseEffort,
+    )
     .option("--max-steps <n>", "step limit", positive("--max-steps"), BUDGET_DEFAULTS.maxSteps)
     .option(
       "--max-cost <usd>",

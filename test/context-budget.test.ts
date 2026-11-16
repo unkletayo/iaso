@@ -73,6 +73,13 @@ describe("ContextMeter", () => {
     expect(size).toBe(5_000 + 20);
   });
 
+  it("takes off the notes and files, which move to the newest message and are counted there", () => {
+    const meter = new ContextMeter();
+    meter.record(5_000, 1, 300);
+    const size = meter.size({ ...empty, messages: [user("x".repeat(35)), user("y".repeat(70))] });
+    expect(size).toBe(4_700 + 20);
+  });
+
   it("goes back to estimating after reset", () => {
     const meter = new ContextMeter();
     meter.record(5_000, 1);

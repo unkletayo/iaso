@@ -18,6 +18,7 @@ import {
 import type {
   ChatResponse,
   ContentBlock,
+  Effort,
   Message,
   ModelProvider,
   Usage,
@@ -65,6 +66,10 @@ export interface LoopOptions {
   trajectory?: TrajectoryWriter;
   /** Where full copies of shortened outputs go. Without it nothing is saved. */
   outputs?: OutputStore;
+  /** The model's text as it is written, with the step it belongs to (M13 step 13F). */
+  onText?: (delta: string, step: number) => void;
+  /** Reasoning effort for every model call of this loop (M13 step 13E). */
+  effort?: Effort;
 }
 
 export interface LoopResult {
@@ -197,7 +202,7 @@ async function execute(
       isError: true,
     };
   }
-  const ctx = { sandbox: l.opts.sandbox, step, run: l.run };
+  const ctx = { sandbox: l.opts.sandbox, step, run: l.run, timeLeftSec: timeLeftSec(l) };
   const result = await runTool(tool, call.input, ctx, { truncate: false });
   if (call.name === "edit_file" && !result.isError) await trackEdit(l, call);
   return {
@@ -208,10 +213,22 @@ async function execute(
   };
 }
 
-/** Run the calls in order. Calls after a successful `submit` are not run. */
+/** Whole seconds left before the time limit, at least 1 so a command can still start. */
+const timeLeftSec = (l: Loop): number => Math.max(1, Math.floor(l.opts.budget.timeLeftMs / 1000));
+
+const NOT_RUN_TIME = "Not run: the run's time limit was reached.";
+
+/**
+ * Run the calls in order. Calls after a successful `submit` are not run, nor are calls left when
+ * the time limit is reached; each still gets a result so the history stays valid.
+ */
 async function executeAll(l: Loop, calls: ToolCall[], step: number): Promise<ExecutedCall[]> {
   const done: ExecutedCall[] = [];
   for (const [i, call] of calls.entries()) {
+    if (l.opts.budget.timeLeftMs <= 0) {
+      done.push({ call, shown: NOT_RUN_TIME, raw: NOT_RUN_TIME, isError: true });
+      continue;
+    }
     done.push(await execute(l, call, step, i + 1));
     if (l.run.submission ?? l.run.plan) break;
   }
@@ -324,6 +341,7 @@ function build(l: Loop): ReturnType<typeof buildRequest> {
     tools: opts.tools.map((t) => toToolDef(t.definition)),
     maxOutputTokens: opts.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
   });
+  if (opts.effort !== undefined) built.request.effort = opts.effort;
   if (built.staleChanged) l.meter.reset();
   return built;
 }
@@ -458,9 +476,20 @@ async function runStep(l: Loop, step: number): Promise<StepOutcome> {
   const phase = l.run.task.phase;
   const started = performance.now();
 
-  const response = await opts.provider.chat(built.request);
+  // M13 step 13C: the model call, retries included, stops when the run's time runs out.
+  const { onText } = opts;
+  const response = await opts.provider.chat(built.request, {
+    signal: AbortSignal.timeout(Math.max(1, opts.budget.timeLeftMs)),
+    ...(onText === undefined
+      ? {}
+      : {
+          onText: (delta: string) => {
+            onText(delta, step);
+          },
+        }),
+  });
   const costUsd = l.cost.add(response.usage);
-  l.meter.record(response.usage.inputTokens, built.request.messages.length);
+  l.meter.record(response.usage.inputTokens, built.request.messages.length, built.volatileTokens);
   l.steps = step;
   // Providers reject an assistant turn with no content, so keep the history valid.
   const content: ContentBlock[] =
@@ -544,6 +573,9 @@ async function drive(l: Loop): Promise<Ending> {
       if (outcome.done) return outcome;
     }
   } catch (err) {
+    // A call aborted by the time limit (or anything that fails once the time is up) is the budget.
+    const check = l.opts.budget.check({ steps: l.steps, costUsd: totalCost(l) });
+    if (!check.ok) return { status: "budget_exceeded", message: check.message };
     return { status: "error", message: err instanceof Error ? err.message : String(err) };
   }
 }

@@ -25,6 +25,18 @@ describe("catalogue", () => {
     expect(findModel(cat, "ollama:qwen2.5-coder:32b").apiModel).toBe("qwen2.5-coder:32b");
   });
 
+  it("says which models take an effort setting, and assumes none when the entry is silent", () => {
+    const shipped = loadCatalogue();
+    expect(findModel(shipped, "anthropic:claude-haiku-5-5").effort).toBe(true);
+    expect(findModel(shipped, "openai:gpt-5").effort).toBe(true);
+    expect(findModel(shipped, "ollama:qwen2.5-coder:32b").effort).toBe(false);
+    const silent = Object.fromEntries(
+      Object.entries(shipped.models[0] ?? {}).filter(([key]) => key !== "effort"),
+    );
+    const parsed = parseCatalogue(JSON.stringify({ ...shipped, models: [silent] }));
+    expect(parsed.models[0]?.effort).toBe(false);
+  });
+
   it("rejects an id that does not match provider:apiModel", () => {
     expect(() => parseCatalogue(withModel({ id: "openai:other" }))).toThrow(/id must equal/);
   });

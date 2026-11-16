@@ -427,14 +427,20 @@ describe("executeBench", () => {
     over: Partial<BenchCommandOptions> = {},
     memory?: number,
     evaluateImpl: BenchCommandDeps["evaluate"] = gradeFirst(2),
+    arch = "x64",
   ) {
     const all = instances(10);
     const logs: string[] = [];
+    /** Image removals and the grading call, in the order they happened. */
+    const events: string[] = [];
     const provider = new MockProvider(submits(10), MODEL);
     const loadInstances = vi.fn(() => Promise.resolve(all));
     const createProvider = vi.fn(() => provider);
     const sandboxed: string[] = [];
-    const evaluate = vi.fn(evaluateImpl);
+    const evaluate = vi.fn((o: HarnessOptions) => {
+      events.push("grade");
+      return evaluateImpl(o);
+    });
     const deps: BenchCommandDeps = {
       loadInstances,
       createProvider,
@@ -442,9 +448,13 @@ describe("executeBench", () => {
         sandboxed.push(inst.instanceId);
         return tracked([], inst.instanceId);
       },
-      removeImage: () => Promise.resolve(),
+      removeImage: (image) => {
+        events.push(`remove ${image}`);
+        return Promise.resolve();
+      },
       dockerMemoryBytes: () => Promise.resolve(memory),
       evaluate: evaluate,
+      hostArch: () => arch,
       log: (line) => logs.push(line),
     };
     const out = await tmp();
@@ -454,11 +464,65 @@ describe("executeBench", () => {
       loadInstances,
       createProvider,
       evaluate,
+      events,
       sandboxed,
       out,
       opts: { ...base, out, ...over },
     };
   }
+
+  it("passes --effort to the plan and fix calls", async () => {
+    const s = await commandSetup({ sample: 1, effort: "medium" });
+    await executeBench(s.opts, s.deps);
+    const provider = s.createProvider.mock.results[0]?.value as MockProvider | undefined;
+    expect(provider?.requests.length).toBeGreaterThan(0);
+    expect(provider?.requests.every((r) => r.effort === "medium")).toBe(true);
+  });
+
+  it("on an x64 host removes each image as soon as its task is done", async () => {
+    const s = await commandSetup({ sample: 2 });
+    await executeBench(s.opts, s.deps);
+    expect(s.events.at(-1)).toBe("grade");
+    expect(s.events.filter((e) => e.startsWith("remove"))).toHaveLength(2);
+  });
+
+  it("on another host keeps the images until they are graded, then removes them", async () => {
+    const s = await commandSetup({ sample: 2 }, undefined, gradeFirst(2), "arm64");
+    await executeBench(s.opts, s.deps);
+    expect(s.events[0]).toBe("grade");
+    expect(s.events.slice(1)).toHaveLength(2);
+    expect(s.events.slice(1).every((e) => e.startsWith("remove swebench/sweb.eval.x86_64."))).toBe(
+      true,
+    );
+    expect(s.logs.join("\n")).toContain("this host is arm64");
+  });
+
+  it("removes held images even when grading fails", async () => {
+    const failing = () => Promise.reject(new HarnessError("harness broke"));
+    const s = await commandSetup({ sample: 2 }, undefined, failing, "arm64");
+    await expect(executeBench(s.opts, s.deps)).rejects.toThrow("harness broke");
+    expect(s.events.filter((e) => e.startsWith("remove"))).toHaveLength(2);
+  });
+
+  it("does not hold images with --keep-images or --no-evaluate", async () => {
+    const kept = await commandSetup(
+      { sample: 2, keepImages: true },
+      undefined,
+      gradeFirst(2),
+      "arm64",
+    );
+    await executeBench(kept.opts, kept.deps);
+    expect(kept.events).toEqual(["grade"]);
+    expect(kept.logs.join("\n")).not.toContain("this host is");
+    const ungraded = await commandSetup(
+      { sample: 2, evaluate: false },
+      undefined,
+      gradeFirst(2),
+      "arm64",
+    );
+    await executeBench(ungraded.opts, ungraded.deps);
+    expect(ungraded.events.filter((e) => e.startsWith("remove"))).toHaveLength(2);
+  });
 
   it("will not start without --sample, and touches neither the dataset nor a model", async () => {
     const s = await commandSetup();

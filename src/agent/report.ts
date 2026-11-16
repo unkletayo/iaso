@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { type PipelineResult } from "./pipeline.js";
 import { renderPlan } from "./plan.js";
+import { type NetworkState, describeNetwork, networkStateSchema } from "../sandbox/install.js";
 import { type Verification, describeCheck, verificationSchema } from "./verify.js";
 
 export interface ReportInput {
@@ -10,12 +11,16 @@ export interface ReportInput {
   issue: string;
   model: string;
   planModel?: string;
+  /** The `--effort` given, when the model accepted it. */
+  effort?: string;
   /** Where the issue and repository came from. */
   source?: { label: string; issueUrl?: string; commit?: string };
   elapsedMs: number;
   result: PipelineResult;
   /** Iaso's own check of the patch after the run (M13 step 13A). */
   verification?: Verification;
+  /** Whether the sandbox network was cut after install (M13 step 13D). */
+  network?: NetworkState;
 }
 
 /**
@@ -27,6 +32,7 @@ export const runInfoSchema = z.object({
   runId: z.string(),
   model: z.string(),
   planModel: z.string().optional(),
+  effort: z.string().optional(),
   status: z.string(),
   steps: z.number(),
   costUsd: z.number(),
@@ -47,6 +53,8 @@ export const runInfoSchema = z.object({
   patchBytes: z.number(),
   /** Absent in runs made before step 13A. */
   verification: verificationSchema.optional(),
+  /** Absent in runs made before step 13D. */
+  network: networkStateSchema.optional(),
 });
 export type RunInfo = z.infer<typeof runInfoSchema>;
 
@@ -57,6 +65,7 @@ export function runInfoOf(input: ReportInput): RunInfo {
     runId: input.runId,
     model: input.model,
     ...(input.planModel === undefined ? {} : { planModel: input.planModel }),
+    ...(input.effort === undefined ? {} : { effort: input.effort }),
     status: input.result.status,
     steps: input.result.steps,
     costUsd: input.result.costUsd,
@@ -76,6 +85,7 @@ export function runInfoOf(input: ReportInput): RunInfo {
     testsRun: input.result.fix?.state.testsRun ?? [],
     patchBytes: Buffer.byteLength(input.result.diff),
     ...(input.verification === undefined ? {} : { verification: input.verification }),
+    ...(input.network === undefined ? {} : { network: input.network }),
   };
 }
 
@@ -113,10 +123,12 @@ export function renderReport({
   issue,
   model,
   planModel,
+  effort,
   source,
   elapsedMs,
   result,
   verification,
+  network,
 }: ReportInput): string {
   const state = result.fix?.state;
   const sub = result.fix?.submission;
@@ -129,10 +141,11 @@ export function renderReport({
           `- source: ${source.label}${source.issueUrl ? ` (${source.issueUrl})` : ""}${source.commit ? `, commit ${source.commit}` : ""}`,
         ]
       : []),
-    `- model: ${model}${planModel && planModel !== model ? `, plan model: ${planModel}` : ""}`,
+    `- model: ${model}${planModel && planModel !== model ? `, plan model: ${planModel}` : ""}${effort === undefined ? "" : `, effort: ${effort}`}`,
     `- steps: ${String(result.steps)} (plan ${String(result.planSteps)})`,
     `- cost: $${result.costUsd.toFixed(4)} (plan $${result.planCostUsd.toFixed(4)})`,
     `- time: ${(elapsedMs / 1000).toFixed(1)}s`,
+    ...(network ? [`- network: ${describeNetwork(network)}`] : []),
     "",
     "## Issue",
     "",

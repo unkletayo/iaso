@@ -1,4 +1,10 @@
-import type { ChatRequest, ChatResponse, ContentBlock, ModelProvider } from "./types.js";
+import type {
+  ChatOptions,
+  ChatRequest,
+  ChatResponse,
+  ContentBlock,
+  ModelProvider,
+} from "./types.js";
 
 export type ScriptedStep = ChatResponse | ((req: ChatRequest) => ChatResponse);
 
@@ -30,7 +36,8 @@ export class MockProvider implements ModelProvider {
     readonly id = "mock:scripted",
   ) {}
 
-  chat(req: ChatRequest): Promise<ChatResponse> {
+  /** With `onText`, the text of the scripted response is handed out first, as a real stream would. */
+  chat(req: ChatRequest, options: ChatOptions = {}): Promise<ChatResponse> {
     this.requests.push(structuredClone(req));
     const step = this.script[this.index];
     if (step === undefined) {
@@ -39,7 +46,12 @@ export class MockProvider implements ModelProvider {
       );
     }
     this.index += 1;
-    return Promise.resolve(typeof step === "function" ? step(req) : step);
+    const response = typeof step === "function" ? step(req) : step;
+    if (options.onText) {
+      for (const b of response.content)
+        if (b.type === "text" && b.text !== "") options.onText(b.text);
+    }
+    return Promise.resolve(response);
   }
 
   get callCount(): number {

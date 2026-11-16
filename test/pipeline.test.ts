@@ -153,3 +153,36 @@ describe("runPlanPhase: review rounds", () => {
     expect(review).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("runPipeline: effort", () => {
+  it("gives each phase its own setup's effort", async () => {
+    const s = setup([mockToolCall("p", "submit_plan", plan), submit]);
+    const planProvider = s.provider;
+    await runPipeline({
+      ...s.options,
+      plan: { provider: planProvider, prices, effort: "high" },
+      fix: { ...s.options.fix, effort: "low" },
+    });
+    expect(s.provider.requests.map((r) => r.effort)).toEqual(["high", "low"]);
+  });
+});
+
+describe("runPipeline: streaming", () => {
+  it("hands the text of both phases out, each with its own step numbers", async () => {
+    const got: [string, number][] = [];
+    const s = setup(
+      [
+        mockToolCall("p", "submit_plan", plan, [{ type: "text", text: "Planning." }]),
+        mockToolCall("b", "bash", { cmd: "ls" }, [{ type: "text", text: "Fixing." }]),
+        submit,
+      ],
+      { onText: (delta, step) => got.push([delta, step]) },
+    );
+    await runPipeline(s.options);
+    // Each phase is its own loop, so the fix phase starts again at step 1.
+    expect(got).toEqual([
+      ["Planning.", 1],
+      ["Fixing.", 1],
+    ]);
+  });
+});
