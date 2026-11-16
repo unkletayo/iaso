@@ -9,6 +9,10 @@ Status: `[x]` done, `[~]` in progress, `[ ]` todo. Update this file at the end o
 - Added dev deps beyond spec list: `@eslint/js`, `typescript-eslint`, `@types/node` (needed to lint and type TS).
 - `models.json` prices are placeholders until verified before M2.
 - npm publish of `0.0.1` and GitHub repo creation: deferred until user says go.
+- No LangChain or LangGraph (2026-11-16): the loop stays our own; standards are adopted at the edges instead (ACP for editors, MCP for tools, OpenTelemetry GenAI conventions for traces).
+- Product scope (2026-11-16): Iaso stays a focused bug-fixing agent (plan, reproduce, fix, verify); the IDE is another way in, not a general coding assistant.
+- Editor protocol (2026-11-16): the Agent Client Protocol (ACP), so editors other than VS Code work too. Check the current spec before M14B starts.
+- IDE workspace (2026-11-16): a git worktree on the host, with approval for every command; Docker stays the default for the CLI and `bench`. The worktree replaces M9's "unsafe local mode".
 
 ## M1: Skeleton (current)
 
@@ -107,6 +111,29 @@ Status: `[x]` done, `[~]` in progress, `[ ]` todo. Update this file at the end o
   - [x] Unclaimed-issue check, phase 1 (`oss/claim.ts`: `checkIssueClaim`, `describeClaim`, `claimMessage`, `IssueClaimedError`; `getJson` exported from `sources/github.ts`; `checkClaim` in `CommandDeps`, called in `iaso run --github` and `iaso plan --github` **before** the clone, sandbox or any model call). Read-only: the issue, its timeline (3 pages), its comments (2 pages). **Stops** (no override flag): closed, locked, assigned; an open PR in the same repo that says `closes|fixes|resolves #N` in its title or body and was touched in the last 90 days; a PR linked on the issue page (`connected` events minus `disconnected`). **Warns only:** an open PR older than 90 days, an open PR that merely mentions the issue, a merged PR on a still-open issue, an earlier PR closed without merging, and comments matching claim phrases ("I'll take this", "can I work on this", "I'm working on it", "assign this to me", "let me try"), quoted with author and date. Keyword matching, so it can miss a claim or misread one; "click on it" and "works on my machine" are tested as non-claims. Checked on the real issue `react-hotkeys-hook#1398`: it stopped on the user's own open PR #1427, as it should. Checked by removing the assignee stop and by treating every mention as a closing PR (each fails a test). 13 + 3 tests. **Phase 2 (done):** `iaso pr --push` runs the same check again after its local blockers pass and before the typed question (`checkClaim` in `PrCommandDeps`): stops with "looks taken, so nothing was sent to GitHub" on a blocker, shows notes, and still lets the user decide on warnings. The dry-run `iaso pr` stays offline, and a draft that is blocked locally (marker, limit, already sent) makes no network call. `claimMessage` takes the consequence text so each caller says what did and did not happen. Checked by removing the push-time stop (a test fails).
   - **Next, in order (agreed):** (1) this docs commit; (2) extend the `submit` tool with a PR-ready title and summary and an `assumptions` list, fix the phase label in the same change, bump the prompt version to `1.0.1`, and re-run the 10-task bench (about $1) to check the 7 of 10 holds; (3) automate fork, branch, commit, push and a draft PR behind a typed `confirm`, with 2 PRs per repo per day and `runs/oss-log.jsonl`; later, the pre-run check that an issue is still unclaimed, and `iaso find`. Held back on purpose: more real PRs until the maintainer of #1427 has responded.
 - [ ] M13 Quality, cost, safety, workflow
+  - [ ] 13A The harness re-runs the tests after `submit`: the new test fails on the base commit and passes with the patch, and the rest of the suite still passes; the result goes into `report.md` and `run.json`.
+  - [ ] 13B Cache the history: notes and working set move after the history, and a breakpoint goes on the last message (the 2026-11-01 cost look found the cache share falling as runs got longer).
+  - [ ] 13C The time limit holds inside a step: each tool timeout is capped at the time left, and an `AbortSignal` reaches the model call.
+  - [ ] 13D The sandbox network goes off after install in `iaso run`, as it already does in `bench`.
+  - [ ] 13E A reasoning-effort setting on `ChatRequest` (Anthropic thinking, OpenAI reasoning effort, Gemini thinking budget).
+  - [ ] 13F Streaming through `ModelProvider` (needed by M14).
+  - [ ] 13G Best-of-N: several attempts, the one that passes 13A's checks is kept (needs 13A; vary the model, not the temperature, see M2).
+  - [ ] 13H CI on every PR (typecheck, lint, test, build), with Docker integration tests nightly; a secret scan of `patch.diff` before it is written.
+- [ ] M14 Engine: a session API and a server (after 13A-13F)
+  - [ ] 14A `src/core/session.ts`: typed events out (`step_started`, `text_delta`, `tool_call`, `tool_result`, `approval_requested`, `context_event`, `finished`) and `approve`, `reject`, `cancel`, `send_message` in; an approval policy per tool (`auto`, `ask`, `deny`, with path and command patterns); resume from `trajectory.jsonl`. The CLI is rebuilt on it, with today's behaviour kept by the existing tests.
+  - [ ] 14B `iaso serve --stdio` speaking ACP over the session API.
+  - [ ] 14C A git worktree workspace (a `Sandbox` that works on the host, with every command approved).
+- [ ] M15 VS Code extension (a client of `iaso serve`)
+  - [ ] 15A Commands: fix this failing test, fix from a GitHub issue, fix this diagnostic; a panel with the live step feed, the plan with approve and edit, and cost and budget meters.
+  - [ ] 15B Changes shown in VS Code's own diff view and accepted or rejected file by file; nothing touches the workspace before that.
+  - [ ] 15C A model picker from `models.json`; keys in VS Code secret storage, never in settings.
+  - [ ] 15D Published on the VS Code Marketplace and Open VSX.
+- [ ] M16 Agent tools and extensibility
+  - [ ] 16A Tools: `grep` and `glob`, a multi-hunk edit, and language-server lookups (definition, references, diagnostics).
+  - [ ] 16B A read-only explorer subagent with its own context.
+  - [ ] 16C An MCP client, hooks before and after tool calls in `.iaso.json`, and project memory read from `AGENTS.md`-style files.
+  - [ ] 16D Checkpoints and undo per step.
+- Folded into existing milestones: native Gemini, a capability profile per model in `models.json`, a model per role and fallback to a second provider go into M8; a fixed eval suite re-run on every prompt or model change, and OpenTelemetry traces, go into M11; the web UI becomes another client of `iaso serve`.
 
 ## Open questions
 
