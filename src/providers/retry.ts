@@ -25,6 +25,21 @@ function statusOf(err: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * A stream that failed after part of the answer had already been handed out. Retrying would hand
+ * out the beginning twice, so this must never be retried: it carries no HTTP status, whatever the
+ * cause had, and `isRetryable` only retries on a status.
+ */
+export class StreamInterruptedError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `The stream broke after it started: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = "StreamInterruptedError";
+    this.cause = cause;
+  }
+}
+
 /** Retry on rate limits (429) and server errors (5xx). Everything else fails fast. */
 export function isRetryable(err: unknown): boolean {
   const status = statusOf(err);
