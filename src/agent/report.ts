@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { type PipelineResult } from "./pipeline.js";
 import { renderPlan } from "./plan.js";
+import { type NetworkState, describeNetwork, networkStateSchema } from "../sandbox/install.js";
 import { type Verification, describeCheck, verificationSchema } from "./verify.js";
 
 export interface ReportInput {
@@ -16,6 +17,8 @@ export interface ReportInput {
   result: PipelineResult;
   /** Iaso's own check of the patch after the run (M13 step 13A). */
   verification?: Verification;
+  /** Whether the sandbox network was cut after install (M13 step 13D). */
+  network?: NetworkState;
 }
 
 /**
@@ -47,6 +50,8 @@ export const runInfoSchema = z.object({
   patchBytes: z.number(),
   /** Absent in runs made before step 13A. */
   verification: verificationSchema.optional(),
+  /** Absent in runs made before step 13D. */
+  network: networkStateSchema.optional(),
 });
 export type RunInfo = z.infer<typeof runInfoSchema>;
 
@@ -76,6 +81,7 @@ export function runInfoOf(input: ReportInput): RunInfo {
     testsRun: input.result.fix?.state.testsRun ?? [],
     patchBytes: Buffer.byteLength(input.result.diff),
     ...(input.verification === undefined ? {} : { verification: input.verification }),
+    ...(input.network === undefined ? {} : { network: input.network }),
   };
 }
 
@@ -117,6 +123,7 @@ export function renderReport({
   elapsedMs,
   result,
   verification,
+  network,
 }: ReportInput): string {
   const state = result.fix?.state;
   const sub = result.fix?.submission;
@@ -133,6 +140,7 @@ export function renderReport({
     `- steps: ${String(result.steps)} (plan ${String(result.planSteps)})`,
     `- cost: $${result.costUsd.toFixed(4)} (plan $${result.planCostUsd.toFixed(4)})`,
     `- time: ${(elapsedMs / 1000).toFixed(1)}s`,
+    ...(network ? [`- network: ${describeNetwork(network)}`] : []),
     "",
     "## Issue",
     "",

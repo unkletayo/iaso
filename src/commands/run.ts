@@ -13,6 +13,7 @@ import {
 import { renderPlan } from "../agent/plan.js";
 import { writeReport } from "../agent/report.js";
 import { describeCheck, notVerified, verifyRun } from "../agent/verify.js";
+import { OFFLINE_RULE, installThenCutNetwork } from "../sandbox/install.js";
 import { BUDGET_DEFAULTS, type BudgetLimits, IasoConfigSchema, loadConfig } from "../config.js";
 import { type Catalogue, findModel, loadCatalogue } from "../models.js";
 import {
@@ -262,6 +263,7 @@ async function runWithSource(
   });
   await sandbox.start();
   try {
+    const network = await installThenCutNetwork(sandbox, config.installCommand, deps.log);
     if (mode === "plan") {
       const stage = await runPlanPhase({
         fix,
@@ -286,7 +288,8 @@ async function runWithSource(
       issue,
       limits,
       runDir,
-      extraRules: config.extraRules,
+      extraRules:
+        network.network === "off" ? [...config.extraRules, OFFLINE_RULE] : config.extraRules,
       usePlan: opts.plan,
       ...(review ? { review } : {}),
     });
@@ -319,6 +322,7 @@ async function runWithSource(
       elapsedMs: Date.now() - started,
       result,
       verification,
+      network,
     });
     if (result.status === "submitted") {
       deps.log(`check: ${verification.status}`);

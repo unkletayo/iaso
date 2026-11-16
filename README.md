@@ -179,6 +179,8 @@ A repo can carry a `.iaso.json`:
 }
 ```
 
+With an `installCommand`, Iaso runs it in the sandbox before any model call, then turns the sandbox's network off for the rest of the run, so code in the repo or text planted in the issue can't send anything out; the model is told the network is off. Without one, the agent may need to install things itself, so the network stays on, and `report.md` says which happened. A failed install stops the run before anything is spent on the model.
+
 Pass it with `--config`. For local repos, it's loaded automatically; for cloned repos, it's ignored unless you pass `--config` (a project's config can influence the Docker image and prompt, so it isn't trusted without an explicit opt-in).
 
 ---

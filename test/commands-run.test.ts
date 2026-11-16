@@ -155,6 +155,63 @@ describe("executeCommand", () => {
     expect(d.lines.some((l) => l.startsWith("check:"))).toBe(false);
   });
 
+  it("run installs, cuts the network, tells the model, and records it", async () => {
+    const w = await workspace();
+    await writeFile(
+      join(w.opts.repo ?? "", ".iaso.json"),
+      JSON.stringify({ installCommand: "npm ci" }),
+    );
+    const provider = new MockProvider([mockToolCall("p", "submit_plan", plan), submit]);
+    const d = deps(provider);
+    const fake = fakeSandbox();
+    const setNetwork = vi.fn(() => Promise.resolve());
+    fake.sandbox.setNetwork = setNetwork;
+    d.deps.createSandbox = () => fake.sandbox;
+    await executeCommand("run", w.opts, d.deps);
+    expect(fake.exec).toHaveBeenCalledWith("npm ci", { timeoutSec: 900 });
+    expect(setNetwork).toHaveBeenCalledWith(false);
+    expect(provider.requests.at(-1)?.system).toContain("The sandbox has no network.");
+    const [runId] = await readdir(w.opts.runs);
+    const dir = join(w.opts.runs, runId ?? "");
+    const info = runInfoSchema.parse(JSON.parse(await readFile(join(dir, "run.json"), "utf8")));
+    expect(info.network).toEqual({ network: "off", installCommand: "npm ci" });
+    expect(await readFile(join(dir, "report.md"), "utf8")).toContain(
+      "- network: off after `npm ci`",
+    );
+  });
+
+  it("run keeps the network on without an install command, and says so", async () => {
+    const w = await workspace();
+    const provider = new MockProvider([mockToolCall("p", "submit_plan", plan), submit]);
+    await executeCommand("run", w.opts, deps(provider).deps);
+    expect(provider.requests.at(-1)?.system).not.toContain("no network");
+    const [runId] = await readdir(w.opts.runs);
+    const report = await readFile(join(w.opts.runs, runId ?? "", "report.md"), "utf8");
+    expect(report).toContain("- network: on for the whole run (no installCommand in .iaso.json)");
+  });
+
+  it("run stops before any model call when the install fails", async () => {
+    const w = await workspace();
+    await writeFile(
+      join(w.opts.repo ?? "", ".iaso.json"),
+      JSON.stringify({ installCommand: "npm ci" }),
+    );
+    const provider = new MockProvider([submit]);
+    const d = deps(provider);
+    const fake = fakeSandbox({}, () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr: "boom",
+      timedOut: false,
+    }));
+    const destroy = vi.fn(() => Promise.resolve());
+    fake.sandbox.destroy = destroy;
+    d.deps.createSandbox = () => fake.sandbox;
+    await expect(executeCommand("run", w.opts, d.deps)).rejects.toThrow(/install command failed/);
+    expect(provider.callCount).toBe(0);
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
   it("run --approve-plan asks the reviewer", async () => {
     const w = await workspace();
     const d = deps(new MockProvider([mockToolCall("p", "submit_plan", plan), submit]));
