@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { ModelEntry } from "../models.js";
 import { type RetryOptions, withRetry } from "./retry.js";
 import type {
+  ChatOptions,
   ChatRequest,
   ChatResponse,
   ContentBlock,
@@ -13,6 +14,7 @@ import type {
 /** The one SDK call the adapter needs. Tests inject a fake. */
 export type CreateMessage = (
   params: Anthropic.MessageCreateParamsNonStreaming,
+  options?: ChatOptions,
 ) => Promise<Anthropic.Message>;
 
 const CACHE: Anthropic.CacheControlEphemeral = { type: "ephemeral" };
@@ -113,7 +115,7 @@ export class AnthropicProvider implements ModelProvider {
     this.id = entry.id;
   }
 
-  async chat(req: ChatRequest): Promise<ChatResponse> {
+  async chat(req: ChatRequest, options: ChatOptions = {}): Promise<ChatResponse> {
     const params: Anthropic.MessageCreateParamsNonStreaming = {
       model: this.entry.apiModel,
       max_tokens: req.maxOutputTokens,
@@ -124,7 +126,7 @@ export class AnthropicProvider implements ModelProvider {
       // `req.temperature` is deliberately not sent: the SDK marks it deprecated for newer models,
       // and any value other than 1.0 gets a 400. Vary attempts by model instead (M13).
     };
-    const res = await withRetry(() => this.create(params), this.retry);
+    const res = await withRetry(() => this.create(params, options), this.retry, options.signal);
     return fromAnthropicMessage(res);
   }
 }
@@ -132,5 +134,7 @@ export class AnthropicProvider implements ModelProvider {
 /** Build a real provider. The SDK's own retries are off: `withRetry` owns that. */
 export function createAnthropicProvider(entry: ModelEntry, apiKey: string): AnthropicProvider {
   const client = new Anthropic({ apiKey, maxRetries: 0 });
-  return new AnthropicProvider(entry, (params) => client.messages.create(params));
+  return new AnthropicProvider(entry, (params, options) =>
+    client.messages.create(params, options?.signal ? { signal: options.signal } : {}),
+  );
 }

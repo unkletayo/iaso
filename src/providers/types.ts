@@ -37,7 +37,13 @@ export interface ChatResponse {
   usage: Usage;
 }
 
+/** Per-call options, kept out of `ChatRequest` so requests stay plain data that can be logged. */
+export interface ChatOptions {
+  signal?: AbortSignal;
+}
+
 export interface ModelProvider {
   id: string; // e.g. "anthropic:claude-sonnet-5-5"
-  chat(req: ChatRequest): Promise<ChatResponse>;
+  /** `signal` aborts the call, retries included (used for the run's time limit). */
+  chat(req: ChatRequest, options?: ChatOptions): Promise<ChatResponse>;
 }

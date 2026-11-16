@@ -28,6 +28,22 @@ describe("withRetry", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("starts no attempt once the signal has fired", async () => {
+    const fn = vi.fn(() => Promise.resolve("ok"));
+    await expect(withRetry(fn, fast, AbortSignal.abort())).rejects.toThrow();
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("does not retry after the signal fires during an attempt", async () => {
+    const controller = new AbortController();
+    const fn = vi.fn(() => {
+      controller.abort();
+      return Promise.reject(new HttpError(500));
+    });
+    await expect(withRetry(fn, fast, controller.signal)).rejects.toBeInstanceOf(HttpError);
+    expect(fn).toHaveBeenCalledOnce();
+  });
+
   it("retries a retryable error then succeeds", async () => {
     const fn = vi
       .fn<() => Promise<string>>()

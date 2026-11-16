@@ -306,6 +306,74 @@ describe("runLoop: budget warning", () => {
   });
 });
 
+describe("runLoop: the time limit inside a step", () => {
+  const limits = { maxSteps: 50, maxCostUsd: 5, maxTimeMinutes: 20 };
+  const LIMIT_MS = 20 * 60_000;
+
+  /** A clock the test moves by hand. */
+  function clock(startMs = 0) {
+    let t = startMs;
+    return { now: () => t, set: (ms: number) => (t = ms) };
+  }
+
+  it("caps a bash timeout at the time left in the run", async () => {
+    const c = clock();
+    const s = setup(
+      [mockToolCall("c1", "bash", { cmd: "npm test", timeoutSec: 600 }), submitCall()],
+      {
+        budget: new Budget(limits, c.now),
+      },
+    );
+    c.set(LIMIT_MS - 30_000);
+    await s.run();
+    expect(s.fake.exec).toHaveBeenCalledWith("npm test", { timeoutSec: 30 });
+  });
+
+  it("does not run the calls left in a step once the time is up, and ends on the budget", async () => {
+    const c = clock();
+    const s = setup(
+      [
+        mockToolCall("c1", "bash", { cmd: "slow" }, [
+          { type: "tool_call", id: "c0", name: "bash", input: { cmd: "first" } },
+        ]),
+      ],
+      { budget: new Budget(limits, c.now) },
+    );
+    vi.mocked(s.fake.exec).mockImplementation(() => {
+      c.set(LIMIT_MS + 1);
+      return Promise.resolve({ exitCode: 0, stdout: "", stderr: "", timedOut: false });
+    });
+    const res = await s.run();
+    expect(s.fake.exec).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe("budget_exceeded");
+    expect(res.message).toBe("time limit reached (20 minutes)");
+  });
+
+  it("gives the model call a signal and ends on the budget when the time runs out during it", async () => {
+    const c = clock();
+    let signal: AbortSignal | undefined;
+    const provider = {
+      id: "mock:abort",
+      chat: (_req: ChatRequest, options?: { signal?: AbortSignal }) => {
+        signal = options?.signal;
+        c.set(LIMIT_MS + 1);
+        return Promise.reject(new DOMException("This operation was aborted", "AbortError"));
+      },
+    };
+    const s = setup([], { provider, budget: new Budget(limits, c.now) });
+    const res = await s.run();
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(res.status).toBe("budget_exceeded");
+    expect(res.message).toBe("time limit reached (20 minutes)");
+  });
+
+  it("still reports a real model error as an error while there is time left", async () => {
+    const provider = { id: "mock:broken", chat: () => Promise.reject(new Error("bad request")) };
+    const res = await setup([], { provider, budget: new Budget(limits) }).run();
+    expect(res).toMatchObject({ status: "error", message: "bad request" });
+  });
+});
+
 describe("runLoop: long output, trajectory", () => {
   let dir: string;
   beforeEach(async () => {

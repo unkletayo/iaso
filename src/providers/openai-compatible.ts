@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { ModelEntry } from "../models.js";
 import { type RetryOptions, withRetry } from "./retry.js";
 import type {
+  ChatOptions,
   ChatRequest,
   ChatResponse,
   ContentBlock,
@@ -15,7 +16,7 @@ type Completion = OpenAI.Chat.ChatCompletion;
 type ChatMessage = OpenAI.Chat.ChatCompletionMessageParam;
 
 /** The one SDK call the adapter needs. Tests inject a fake. */
-export type CreateCompletion = (params: Params) => Promise<Completion>;
+export type CreateCompletion = (params: Params, options?: ChatOptions) => Promise<Completion>;
 
 function toChatMessages(msg: Message): ChatMessage[] {
   if (msg.role === "assistant") {
@@ -123,7 +124,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.id = entry.id;
   }
 
-  async chat(req: ChatRequest): Promise<ChatResponse> {
+  async chat(req: ChatRequest, options: ChatOptions = {}): Promise<ChatResponse> {
     const isOpenAI = this.entry.provider === "openai";
     const params: Params = {
       model: this.entry.apiModel,
@@ -136,7 +137,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       // OpenAI's reasoning models reject any non-default temperature, so only send it elsewhere.
       ...(!isOpenAI && req.temperature !== undefined ? { temperature: req.temperature } : {}),
     };
-    const res = await withRetry(() => this.create(params), this.retry);
+    const res = await withRetry(() => this.create(params, options), this.retry, options.signal);
     return fromCompletion(res);
   }
 }
@@ -151,5 +152,7 @@ export function createOpenAICompatibleProvider(
     maxRetries: 0,
     ...(entry.baseUrl !== undefined ? { baseURL: entry.baseUrl } : {}),
   });
-  return new OpenAICompatibleProvider(entry, (params) => client.chat.completions.create(params));
+  return new OpenAICompatibleProvider(entry, (params, options) =>
+    client.chat.completions.create(params, options?.signal ? { signal: options.signal } : {}),
+  );
 }

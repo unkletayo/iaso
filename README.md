@@ -43,7 +43,7 @@ Planning is a separate model call with read-only bash access. The agent reads th
 
 Each step, the agent can call `bash`, `read_file`, `edit_file`, `notes` (to record facts, test results, and failed approaches), and `submit` (to end the run). Token usage is tracked per step. When the context window fills up, a cheaper model compacts older steps into a rolling summary with a fixed schema: `learned`, `files`, `tests`, `failedApproaches` — no information is ever discarded silently.
 
-If the agent repeats the same bash command or the same edit three times, it's nudged. At five identical repetitions, the run ends as `stuck`. Cost, step count, and time each have hard limits; the defaults are \$1, 50 steps, and 20 minutes.
+If the agent repeats the same bash command or the same edit three times, it's nudged. At five identical repetitions, the run ends as `stuck`. Cost, step count, and time each have hard limits; the defaults are \$1, 50 steps, and 20 minutes. The time limit also holds inside a step: a command's timeout is cut to the time left, and a model call (retries included) is cancelled when the time runs out.
 
 A run writes one trajectory step per line to `trajectory.jsonl` as it goes, so a crash doesn't lose earlier work, and `iaso replay` can reconstruct exactly what the model saw at any step.
 

@@ -31,16 +31,19 @@ export function isRetryable(err: unknown): boolean {
   return status !== undefined && (status === 429 || status >= 500);
 }
 
+/** An aborted `signal` stops the retries: no new attempt starts after it fires. */
 export async function withRetry<T>(
   fn: () => Promise<T>,
   opts: Partial<RetryOptions> = {},
+  signal?: AbortSignal,
 ): Promise<T> {
   const o = { ...DEFAULT_RETRY, ...opts };
   for (let attempt = 1; ; attempt++) {
+    signal?.throwIfAborted();
     try {
       return await fn();
     } catch (err) {
-      if (attempt >= o.maxAttempts || !isRetryable(err)) throw err;
+      if (attempt >= o.maxAttempts || !isRetryable(err) || signal?.aborted === true) throw err;
       const exp = Math.min(o.maxDelayMs, o.baseDelayMs * 2 ** (attempt - 1));
       // Full jitter: random delay in (0, exp].
       await o.sleep(Math.max(1, Math.round(exp * o.random())));

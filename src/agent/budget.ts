@@ -32,6 +32,11 @@ export class Budget {
     return this.now() - this.startedAt;
   }
 
+  /** Time left before the time limit, never below 0. Caps tool and model calls inside a step. */
+  get timeLeftMs(): number {
+    return Math.max(0, this.limits.maxTimeMinutes * 60_000 - this.elapsedMs);
+  }
+
   /** How much of the most used limit is gone. Drives the "wrap up" nudge. */
   used({ steps, costUsd }: BudgetUsage): BudgetUse {
     const minutes = this.elapsedMs / 60_000;

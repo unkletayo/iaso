@@ -56,6 +56,20 @@ describe("AnthropicProvider request mapping", () => {
     for (const tool of tools) expect(tool).not.toHaveProperty("cache_control");
   });
 
+  it("passes the abort signal to the SDK call", async () => {
+    const create =
+      vi.fn<
+        (
+          p: Anthropic.MessageCreateParamsNonStreaming,
+          o?: { signal?: AbortSignal },
+        ) => Promise<Anthropic.Message>
+      >();
+    create.mockResolvedValue(reply());
+    const controller = new AbortController();
+    await new AnthropicProvider(entry, create).chat(req, { signal: controller.signal });
+    expect(create.mock.calls[0]?.[1]).toEqual({ signal: controller.signal });
+  });
+
   it("omits tools when there are none", async () => {
     const create =
       vi.fn<(p: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>>();
