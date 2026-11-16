@@ -17,12 +17,18 @@ export interface ToolDef {
   inputSchema: Record<string, unknown>; // JSON Schema
 }
 
+/** How hard the model should think, in the vendors' own words. Each adapter maps it. */
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORT_LEVELS)[number];
+
 export interface ChatRequest {
   system: string;
   messages: Message[];
   tools: ToolDef[];
   maxOutputTokens: number;
   temperature?: number;
+  /** Omitted: the vendor's default. Only sent to a model whose catalogue entry accepts it. */
+  effort?: Effort;
 }
 
 export interface Usage {

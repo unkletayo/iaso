@@ -11,6 +11,8 @@ export interface ReportInput {
   issue: string;
   model: string;
   planModel?: string;
+  /** The `--effort` given, when the model accepted it. */
+  effort?: string;
   /** Where the issue and repository came from. */
   source?: { label: string; issueUrl?: string; commit?: string };
   elapsedMs: number;
@@ -30,6 +32,7 @@ export const runInfoSchema = z.object({
   runId: z.string(),
   model: z.string(),
   planModel: z.string().optional(),
+  effort: z.string().optional(),
   status: z.string(),
   steps: z.number(),
   costUsd: z.number(),
@@ -62,6 +65,7 @@ export function runInfoOf(input: ReportInput): RunInfo {
     runId: input.runId,
     model: input.model,
     ...(input.planModel === undefined ? {} : { planModel: input.planModel }),
+    ...(input.effort === undefined ? {} : { effort: input.effort }),
     status: input.result.status,
     steps: input.result.steps,
     costUsd: input.result.costUsd,
@@ -119,6 +123,7 @@ export function renderReport({
   issue,
   model,
   planModel,
+  effort,
   source,
   elapsedMs,
   result,
@@ -136,7 +141,7 @@ export function renderReport({
           `- source: ${source.label}${source.issueUrl ? ` (${source.issueUrl})` : ""}${source.commit ? `, commit ${source.commit}` : ""}`,
         ]
       : []),
-    `- model: ${model}${planModel && planModel !== model ? `, plan model: ${planModel}` : ""}`,
+    `- model: ${model}${planModel && planModel !== model ? `, plan model: ${planModel}` : ""}${effort === undefined ? "" : `, effort: ${effort}`}`,
     `- steps: ${String(result.steps)} (plan ${String(result.planSteps)})`,
     `- cost: $${result.costUsd.toFixed(4)} (plan $${result.planCostUsd.toFixed(4)})`,
     `- time: ${(elapsedMs / 1000).toFixed(1)}s`,

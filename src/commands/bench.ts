@@ -14,14 +14,14 @@ import { renderResults } from "../bench/results.js";
 import { type BenchSummary, readTasks, runBench } from "../bench/runner.js";
 import { BUDGET_DEFAULTS, type BudgetLimits } from "../config.js";
 import { findModel, loadCatalogue } from "../models.js";
-import type { ModelProvider } from "../providers/types.js";
+import { EFFORT_LEVELS, type Effort, type ModelProvider } from "../providers/types.js";
 import { createProvider } from "../providers/registry.js";
 import { DockerSandbox } from "../sandbox/docker.js";
 import { SANDBOX_LIMITS } from "../sandbox/images.js";
 import { SWEBENCH_REPO, instanceImage } from "../sandbox/prebuilt.js";
 import type { Sandbox } from "../sandbox/types.js";
 import { type SweInstance, loadSweLite, sampleInstances } from "../sources/swebench.js";
-import { DEFAULT_MODEL, defaultCompactModel } from "./run.js";
+import { DEFAULT_MODEL, defaultCompactModel, parseEffort } from "./run.js";
 
 /** The one dataset so far. The option exists so others (SWE-bench Multilingual) can join. */
 export const DATASETS = ["swebench-lite"] as const;
@@ -34,6 +34,8 @@ export interface BenchCommandOptions {
   concurrency: number;
   model: string;
   planModel?: string;
+  /** Reasoning effort for the plan and fix phases. */
+  effort?: Effort;
   compactModel?: string;
   /** False with `--no-plan`. */
   plan: boolean;
@@ -106,9 +108,17 @@ export function defaultBenchDir(
   );
 }
 
-function phase(id: string, deps: BenchCommandDeps): PhaseSetup {
+function phase(id: string, deps: BenchCommandDeps, effort?: Effort): PhaseSetup {
   const entry = findModel(loadCatalogue(), id);
-  return { provider: deps.createProvider(id), prices: entry, contextWindow: entry.contextWindow };
+  if (effort !== undefined && !entry.effort) {
+    deps.log(`${id} takes no reasoning-effort setting; --effort ${effort} is ignored for it`);
+  }
+  return {
+    provider: deps.createProvider(id),
+    prices: entry,
+    contextWindow: entry.contextWindow,
+    ...(effort !== undefined && entry.effort ? { effort } : {}),
+  };
 }
 
 /** `iaso bench`. Spec §11. */
@@ -129,8 +139,8 @@ export async function executeBench(
   const sample = opts.sample;
 
   // Build the model setups first: a missing API key should fail before anything is downloaded.
-  const fix = phase(opts.model, deps);
-  const plan = opts.planModel === undefined ? undefined : phase(opts.planModel, deps);
+  const fix = phase(opts.model, deps, opts.effort);
+  const plan = opts.planModel === undefined ? undefined : phase(opts.planModel, deps, opts.effort);
   const compactId = opts.compactModel ?? defaultCompactModel(loadCatalogue(), opts.model);
   const compact = compactId === opts.model ? undefined : phase(compactId, deps);
 
@@ -296,6 +306,11 @@ export function registerBench(
     )
     .option("--model <id>", "model for every phase", DEFAULT_MODEL)
     .option("--plan-model <id>", "model for the plan phase (default: --model)")
+    .option(
+      "--effort <level>",
+      `reasoning effort for the plan and fix phases: ${EFFORT_LEVELS.join(", ")} (default: the model's own)`,
+      parseEffort,
+    )
     .option("--compact-model <id>", "model that summarises old steps")
     .option("--no-plan", "skip the plan phase")
     .option(
