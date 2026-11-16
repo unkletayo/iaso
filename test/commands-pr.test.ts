@@ -420,6 +420,63 @@ describe("iaso pr: the draft", () => {
     ).not.toContain("did not settle");
   });
 
+  it("blocks the draft with a marker when Iaso's own check failed, and reports every check", () => {
+    const info = {
+      runId: "r",
+      model: "m",
+      status: "submitted",
+      steps: 1,
+      costUsd: 0,
+      elapsedMs: 1,
+      source: { label: "a/b#1", issueUrl: "https://github.com/a/b/issues/1" },
+      assumptions: [],
+      testsAdded: [],
+      testsRun: [],
+      patchBytes: 1,
+    };
+    const failed = buildDraft(
+      {
+        ...info,
+        verification: {
+          status: "failed",
+          reproduction: {
+            status: "fail",
+            cmd: "npm test",
+            detail: "passes without the fix too, so it does not show the bug",
+            tail: "ok",
+          },
+          suite: { status: "not_checked", reason: "no testCommand in .iaso.json" },
+        },
+      },
+      DIFF,
+      conventions,
+      undefined,
+    );
+    expect(failed.body).toMatch(/\[TODO: Iaso's own check after the run failed/);
+    expect(failed.body).not.toContain("passes without the fix");
+    expect(failed.reminders.join("\n")).toContain(
+      "Iaso's check after the run: failed. Reproduction: fail — `npm test` passes without the fix too",
+    );
+
+    const verified = buildDraft(
+      {
+        ...info,
+        verification: {
+          status: "verified",
+          reproduction: { status: "pass", cmd: "npm test", detail: "ok", tail: "" },
+          suite: { status: "not_checked", reason: "no testCommand in .iaso.json" },
+        },
+      },
+      DIFF,
+      conventions,
+      undefined,
+    );
+    expect(verified.body).not.toContain("own check after the run failed");
+    expect(buildDraft(info, DIFF, conventions, undefined).reminders.join("\n")).toContain(
+      "Iaso did not check this patch after the run",
+    );
+  });
+
   it("says what stands in the way of opening it: markers left, and the daily limit", async () => {
     const m = await makeRun();
     const first = deps();

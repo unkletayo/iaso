@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { runInfoSchema } from "../src/agent/report.js";
 import { buildProgram } from "../src/cli.js";
 import {
   type CommandDeps,
@@ -103,6 +104,55 @@ describe("executeCommand", () => {
     expect(report).toContain("off by one");
     expect(d.lines.at(-1)).toMatch(/^submitted: 2 steps/);
     expect(d.deps.review).not.toHaveBeenCalled();
+  });
+
+  it("run checks a submitted patch itself and records the result in run.json", async () => {
+    const w = await workspace();
+    const d = deps(new MockProvider([mockToolCall("p", "submit_plan", plan), submit]));
+    await executeCommand("run", w.opts, d.deps);
+    const [runId] = await readdir(w.opts.runs);
+    const info = runInfoSchema.parse(
+      JSON.parse(await readFile(join(w.opts.runs, runId ?? "", "run.json"), "utf8")),
+    );
+    // The fake sandbox reports no changed files, so there is nothing to reproduce.
+    expect(info.verification).toEqual({
+      status: "not_checked",
+      reproduction: { status: "not_checked", reason: "the patch adds or changes no test file" },
+      suite: { status: "not_checked", reason: "no testCommand in .iaso.json" },
+    });
+    expect(d.lines).toContain("check: not_checked");
+  });
+
+  it("run still writes the report and patch when the check itself breaks", async () => {
+    const w = await workspace();
+    const d = deps(new MockProvider([mockToolCall("p", "submit_plan", plan), submit]));
+    const fake = fakeSandbox({}, (cmd) => {
+      if (cmd.startsWith("git add -A")) throw new Error("container is gone");
+      return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+    });
+    d.deps.createSandbox = () => fake.sandbox;
+    await executeCommand("run", w.opts, d.deps);
+    const [runId] = await readdir(w.opts.runs);
+    const dir = join(w.opts.runs, runId ?? "");
+    const info = runInfoSchema.parse(JSON.parse(await readFile(join(dir, "run.json"), "utf8")));
+    expect(info.verification?.reproduction).toEqual({
+      status: "not_checked",
+      reason: "the check itself failed: container is gone",
+    });
+    expect(await readFile(join(dir, "patch.diff"), "utf8")).toBe("DIFF");
+  });
+
+  it("run does not check a run that did not submit", async () => {
+    const w = await workspace();
+    const d = deps(new MockProvider([mockToolCall("b", "bash", { cmd: "ls" })]));
+    await expect(executeCommand("run", { ...w.opts, plan: false }, d.deps)).rejects.toThrow();
+    const [runId] = await readdir(w.opts.runs);
+    const info = runInfoSchema.parse(
+      JSON.parse(await readFile(join(w.opts.runs, runId ?? "", "run.json"), "utf8")),
+    );
+    const repro = info.verification?.reproduction;
+    expect(repro?.status === "not_checked" && repro.reason).toMatch(/^the run ended with status /);
+    expect(d.lines.some((l) => l.startsWith("check:"))).toBe(false);
   });
 
   it("run --approve-plan asks the reviewer", async () => {

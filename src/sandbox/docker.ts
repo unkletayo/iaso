@@ -22,7 +22,8 @@ const DEFAULT_TIMEOUT_SEC = 120;
 const MAX_CAPTURE_BYTES = 5 * 1024 * 1024;
 /** Must stay below the capture cap so `readFile` can never return truncated content. */
 const MAX_READ_BYTES = 4 * 1024 * 1024;
-const BASELINE_TAG = "iaso-baseline";
+/** Tag on the starting commit. `diff()` and the post-run check compare against it. */
+export const BASELINE_TAG = "iaso-baseline";
 
 export interface ContainerSpec {
   name: string;

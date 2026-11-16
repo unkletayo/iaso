@@ -12,6 +12,7 @@ import {
 } from "../agent/pipeline.js";
 import { renderPlan } from "../agent/plan.js";
 import { writeReport } from "../agent/report.js";
+import { describeCheck, notVerified, verifyRun } from "../agent/verify.js";
 import { BUDGET_DEFAULTS, type BudgetLimits, IasoConfigSchema, loadConfig } from "../config.js";
 import { type Catalogue, findModel, loadCatalogue } from "../models.js";
 import {
@@ -289,6 +290,22 @@ async function runWithSource(
       usePlan: opts.plan,
       ...(review ? { review } : {}),
     });
+    // The diff is already in `result`, so the check cannot change the patch that gets written.
+    if (result.status === "submitted") deps.log(`run ${runId}: checking the patch`);
+    const verification =
+      result.status === "submitted"
+        ? // A check that breaks must not cost the report and patch the run already paid for.
+          await verifyRun({
+            sandbox,
+            testsRun: result.fix?.state.testsRun ?? [],
+            testsAdded: result.fix?.submission?.testsAdded ?? [],
+            testCommand: config.testCommand,
+          }).catch((err: unknown) =>
+            notVerified(
+              `the check itself failed: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          )
+        : notVerified(`the run ended with status ${result.status}`);
     await writeReport(runDir, {
       runId,
       issue: source.issue,
@@ -301,7 +318,13 @@ async function runWithSource(
       ...(opts.planModel === undefined ? {} : { planModel: opts.planModel }),
       elapsedMs: Date.now() - started,
       result,
+      verification,
     });
+    if (result.status === "submitted") {
+      deps.log(`check: ${verification.status}`);
+      deps.log(`  ${describeCheck("reproduction", verification.reproduction)}`);
+      deps.log(`  ${describeCheck("suite", verification.suite)}`);
+    }
     deps.log(
       `${result.status}: ${String(result.steps)} steps, $${result.costUsd.toFixed(4)}. Report: ${join(runDir, "report.md")}, patch: ${join(runDir, "patch.diff")}`,
     );

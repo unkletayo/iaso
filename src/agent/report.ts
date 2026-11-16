@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { type PipelineResult } from "./pipeline.js";
 import { renderPlan } from "./plan.js";
+import { type Verification, describeCheck, verificationSchema } from "./verify.js";
 
 export interface ReportInput {
   runId: string;
@@ -13,12 +14,14 @@ export interface ReportInput {
   source?: { label: string; issueUrl?: string; commit?: string };
   elapsedMs: number;
   result: PipelineResult;
+  /** Iaso's own check of the patch after the run (M13 step 13A). */
+  verification?: Verification;
 }
 
 /**
  * `run.json`: the facts about a run that other commands (`iaso pr`) need, so they never have to read
  * them out of the prose in `report.md`. `testsRun` is what the agent noted with its `notes` tool,
- * not something Iaso checked.
+ * not something Iaso checked; `verification` is what Iaso checked itself.
  */
 export const runInfoSchema = z.object({
   runId: z.string(),
@@ -42,6 +45,8 @@ export const runInfoSchema = z.object({
   confidence: z.enum(["low", "medium", "high"]).optional(),
   testsRun: z.array(z.object({ cmd: z.string(), result: z.string(), step: z.number() })),
   patchBytes: z.number(),
+  /** Absent in runs made before step 13A. */
+  verification: verificationSchema.optional(),
 });
 export type RunInfo = z.infer<typeof runInfoSchema>;
 
@@ -70,7 +75,26 @@ export function runInfoOf(input: ReportInput): RunInfo {
     testsAdded: sub?.testsAdded ?? [],
     testsRun: input.result.fix?.state.testsRun ?? [],
     patchBytes: Buffer.byteLength(input.result.diff),
+    ...(input.verification === undefined ? {} : { verification: input.verification }),
   };
+}
+
+function renderVerification(v: Verification): string[] {
+  const lines = [
+    `status: ${v.status}`,
+    "",
+    `- ${describeCheck("reproduction", v.reproduction)}`,
+    `- ${describeCheck("suite", v.suite)}`,
+  ];
+  for (const [name, check] of [
+    ["reproduction", v.reproduction],
+    ["suite", v.suite],
+  ] as const) {
+    if (check.status === "fail" && check.tail !== "") {
+      lines.push("", `Last lines of the ${name} check:`, "", fence("", check.tail));
+    }
+  }
+  return lines;
 }
 
 const fence = (lang: string, body: string): string => {
@@ -92,6 +116,7 @@ export function renderReport({
   source,
   elapsedMs,
   result,
+  verification,
 }: ReportInput): string {
   const state = result.fix?.state;
   const sub = result.fix?.submission;
@@ -134,6 +159,9 @@ export function renderReport({
       "",
       bullets(state.failedApproaches.map((f) => `${f.what}: ${f.whyItFailed}`)),
     );
+  }
+  if (verification) {
+    lines.push("", "## Checked by Iaso after the run", "", ...renderVerification(verification));
   }
   lines.push(
     "",

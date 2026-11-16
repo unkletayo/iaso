@@ -106,6 +106,27 @@ describe("renderReport", () => {
     expect(md).not.toContain("## Tests run");
   });
 
+  it("shows Iaso's own check, with the end of a failing check's output", () => {
+    const md = renderReport({
+      ...input,
+      verification: {
+        status: "failed",
+        reproduction: {
+          status: "fail",
+          cmd: "node --test",
+          detail: "fails with the fix (exit 1)",
+          tail: "AssertionError: 3 !== 5",
+        },
+        suite: { status: "not_checked", reason: "no testCommand in .iaso.json" },
+      },
+    });
+    expect(md).toContain("## Checked by Iaso after the run\n\nstatus: failed");
+    expect(md).toContain("- reproduction: fail — `node --test` fails with the fix (exit 1)");
+    expect(md).toContain("- suite: not checked (no testCommand in .iaso.json)");
+    expect(md).toContain("AssertionError: 3 !== 5");
+    expect(renderReport(input)).not.toContain("Checked by Iaso");
+  });
+
   it("uses a longer fence when the diff contains backticks", () => {
     const md = renderReport({ ...input, result: { ...base, diff: "+```js\n+x\n+```\n" } });
     expect(md).toContain("````diff");

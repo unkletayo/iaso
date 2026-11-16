@@ -18,7 +18,7 @@ export const editFileDefinition = defineTool({
 const fail = (output: string): ToolResult => ({ output, isError: true });
 
 /** Quote for POSIX sh: wrap in single quotes and escape embedded single quotes. */
-function shellQuote(value: string): string {
+export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
