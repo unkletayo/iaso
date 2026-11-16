@@ -65,9 +65,13 @@ export function thresholdsFor(contextWindow: number): Thresholds {
 export class ContextMeter {
   private reported: { tokens: number; messageCount: number } | undefined;
 
-  /** `messageCount` is how many messages the request that produced `inputTokens` contained. */
-  record(inputTokens: number, messageCount: number): void {
-    this.reported = { tokens: inputTokens, messageCount };
+  /**
+   * `messageCount` is how many messages the request that produced `inputTokens` contained.
+   * `volatileTokens` is the part that moves to the newest message on the next request (the notes and
+   * working set), so it is taken off here and counted again with the messages added since.
+   */
+  record(inputTokens: number, messageCount: number, volatileTokens = 0): void {
+    this.reported = { tokens: Math.max(0, inputTokens - volatileTokens), messageCount };
   }
 
   reset(): void {

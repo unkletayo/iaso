@@ -1,5 +1,6 @@
 import type { ChatRequest, ContentBlock, Message, ToolDef } from "../providers/types.js";
 import { MAX_READ_LINES } from "../tools/read-file.js";
+import { estimateTokens } from "./budget.js";
 import { splitSteps } from "./compaction.js";
 import { applyStaleness } from "./staleness.js";
 import type { TaskState } from "./state.js";
@@ -42,6 +43,8 @@ export interface BuiltRequest {
   omittedSteps: number;
   /** True when staleness marking rewrote a file read. */
   staleChanged: boolean;
+  /** Estimated size of the notes and working set, which move to the newest message each step. */
+  volatileTokens: number;
 }
 
 const list = (items: string[]): string =>
@@ -82,11 +85,12 @@ export function renderWorkingSet(files: readonly WorkingFile[]): string {
 
 /**
  * Spec §7A point 2: rebuild the request from layers, stable first:
- * pinned (system, issue, plan), compacted summary, task state, working set, recent history.
- * The first user message carries all but the history, as separate text blocks. The order differs
- * from the spec's list on purpose: stable layers first, so two cache breakpoints (after the pinned
- * block and after the summary) keep the prefix identical between steps. History follows as real
- * messages.
+ * pinned (system, issue, plan), compacted summary, recent history, then task state and working set.
+ * The order differs from the spec's list on purpose: everything that stays the same between steps
+ * comes first, so the prompt cache can reuse it. Cache breakpoints sit after the pinned block,
+ * after the summary, and on the last history block. The volatile layers (notes, working set) change
+ * on most steps, so they go last, as text after the newest history message, and carry no breakpoint.
+ * Next step that message has no volatile text and the prefix up to its breakpoint is unchanged.
  */
 export function buildRequest(input: LayerInput): BuiltRequest {
   const stale = applyStaleness(input.history, input.firstStep);
@@ -102,36 +106,59 @@ export function buildRequest(input: LayerInput): BuiltRequest {
   if (input.plan !== undefined) pinned.push(`## Approved plan\n\n${input.plan}`);
 
   // Volatile: changes on most steps, so it goes last and carries no cache breakpoint.
-  const volatile = [renderTaskState(input.state)];
+  const volatileParts = [renderTaskState(input.state)];
   const workingSet = renderWorkingSet(input.workingSet);
-  if (workingSet !== "") volatile.push(workingSet);
+  if (workingSet !== "") volatileParts.push(workingSet);
   if (input.compactedSummary === undefined && omitted > 0) {
-    volatile.push(
+    volatileParts.push(
       `[${String(omitted)} earlier steps are not shown. Your notes above keep what mattered.]`,
     );
   }
+  const volatile: ContentBlock = { type: "text", text: volatileParts.join("\n\n") };
 
-  const content: ContentBlock[] = [
+  const context: ContentBlock[] = [
     { type: "text", text: pinned.join("\n\n"), cacheBreakpoint: true },
   ];
-  // The summary only changes at compaction, so it sits before the volatile layers.
+  // The summary only changes at compaction, so it sits before the history.
   if (input.compactedSummary !== undefined) {
-    content.push({
+    context.push({
       type: "text",
       text: `## Summary of earlier steps\n\n${input.compactedSummary}`,
       cacheBreakpoint: true,
     });
   }
-  content.push({ type: "text", text: volatile.join("\n\n") });
+
+  const last = kept.at(-1);
+  const messages: Message[] =
+    last === undefined
+      ? [{ role: "user", content: [...context, volatile] }]
+      : last.role === "assistant"
+        ? // Not reached from the loop; keeps the volatile text out of the model's own turn.
+          [{ role: "user", content: context }, ...kept, { role: "user", content: [volatile] }]
+        : [
+            { role: "user", content: context },
+            ...kept.slice(0, -1),
+            // History always ends with a user turn (tool results or a nudge). Copied, so the
+            // caller's history keeps no breakpoint and no volatile text.
+            { role: last.role, content: [...withBreakpointOnLast(last.content), volatile] },
+          ];
 
   return {
     request: {
       system: input.system,
-      messages: [{ role: "user", content }, ...kept],
+      messages,
       tools: input.tools,
       maxOutputTokens: input.maxOutputTokens,
     },
     omittedSteps: omitted,
     staleChanged: stale.changed,
+    volatileTokens: estimateTokens(volatile.text),
   };
+}
+
+/** The same blocks, with a cache breakpoint on the last text or tool result. */
+function withBreakpointOnLast(content: readonly ContentBlock[]): ContentBlock[] {
+  return content.map((b, i) =>
+    i === content.length - 1 && b.type !== "tool_call" ? { ...b, cacheBreakpoint: true } : b,
+  );
 }

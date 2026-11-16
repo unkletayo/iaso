@@ -37,7 +37,7 @@ const req: ChatRequest = {
 };
 
 describe("AnthropicProvider request mapping", () => {
-  it("sends model, system with cache control, tools with a cache breakpoint on the last", async () => {
+  it("sends model, system with cache control, and tools without a breakpoint of their own", async () => {
     const create =
       vi.fn<(p: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>>();
     create.mockResolvedValue(reply());
@@ -50,9 +50,10 @@ describe("AnthropicProvider request mapping", () => {
     expect(params?.system).toEqual([
       { type: "text", text: "You fix bugs.", cache_control: { type: "ephemeral" } },
     ]);
+    // The system prompt's breakpoint caches the tools too, which keeps the request at 4 breakpoints.
     const tools = params?.tools as Anthropic.Tool[];
-    expect(tools[0]).not.toHaveProperty("cache_control");
-    expect(tools[1]?.cache_control).toEqual({ type: "ephemeral" });
+    expect(tools).toHaveLength(2);
+    for (const tool of tools) expect(tool).not.toHaveProperty("cache_control");
   });
 
   it("omits tools when there are none", async () => {
@@ -204,6 +205,49 @@ describe("AnthropicProvider: text block cache breakpoints", () => {
     expect(content).toEqual([
       { type: "text", text: "pinned", cache_control: { type: "ephemeral" } },
       { type: "text", text: "volatile" },
+    ]);
+  });
+
+  it("sends cache_control on a tool result marked cacheBreakpoint", async () => {
+    let params: Anthropic.MessageCreateParamsNonStreaming | undefined;
+    const provider = new AnthropicProvider({ id: "anthropic:m", apiModel: "m" }, (p) => {
+      params = p;
+      return Promise.resolve({
+        id: "x",
+        type: "message",
+        role: "assistant",
+        model: "m",
+        content: [{ type: "text", text: "ok", citations: null }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      } as unknown as Anthropic.Message);
+    });
+    await provider.chat({
+      system: "S",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "pinned" }] },
+        { role: "assistant", content: [{ type: "tool_call", id: "c1", name: "bash", input: {} }] },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", id: "c1", output: "out", isError: false, cacheBreakpoint: true },
+            { type: "text", text: "notes" },
+          ],
+        },
+      ],
+      tools: [],
+      maxOutputTokens: 10,
+    });
+    expect(params?.messages[2]?.content).toEqual([
+      {
+        type: "tool_result",
+        tool_use_id: "c1",
+        content: "out",
+        is_error: false,
+        cache_control: { type: "ephemeral" },
+      },
+      { type: "text", text: "notes" },
     ]);
   });
 });

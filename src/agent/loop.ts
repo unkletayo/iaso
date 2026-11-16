@@ -460,7 +460,7 @@ async function runStep(l: Loop, step: number): Promise<StepOutcome> {
 
   const response = await opts.provider.chat(built.request);
   const costUsd = l.cost.add(response.usage);
-  l.meter.record(response.usage.inputTokens, built.request.messages.length);
+  l.meter.record(response.usage.inputTokens, built.request.messages.length, built.volatileTokens);
   l.steps = step;
   // Providers reject an assistant turn with no content, so keep the history valid.
   const content: ContentBlock[] =

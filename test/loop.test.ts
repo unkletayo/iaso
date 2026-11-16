@@ -50,8 +50,12 @@ function setup(
 }
 
 /** All text of the first (context) message of a request. */
-const contextText = (req: ChatRequest | undefined): string =>
-  textsOf(req?.messages[0]?.content ?? []).join("\n\n");
+/** The layers the loop builds: pinned ones lead the first message, notes and files end the last. */
+const contextText = (req: ChatRequest | undefined): string => {
+  const messages = req?.messages ?? [];
+  const ends = messages.length > 1 ? [messages[0], messages.at(-1)] : messages;
+  return ends.flatMap((m) => textsOf(m?.content ?? [])).join("\n\n");
+};
 const lastUser = (req: ChatRequest | undefined): ContentBlock[] =>
   req?.messages.at(-1)?.content ?? [];
 const textsOf = (blocks: ContentBlock[]): string[] =>
@@ -91,7 +95,11 @@ describe("runLoop: ending", () => {
     const res = await s.run();
     expect(res.status).toBe("no_tool_use");
     expect(res.steps).toBe(2);
-    expect(textsOf(lastUser(s.provider.requests[1]))).toEqual([NO_TOOL_NUDGE]);
+    const texts = textsOf(lastUser(s.provider.requests[1]));
+    expect(texts[0]).toBe(NO_TOOL_NUDGE);
+    // The notes follow the nudge: they always end the newest message.
+    expect(texts[1]).toContain("## Your notes");
+    expect(texts).toHaveLength(2);
   });
 
   it("forgives one missed tool call: using a tool afterwards resets the nudge", async () => {

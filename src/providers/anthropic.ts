@@ -38,6 +38,7 @@ function toAnthropicMessage(msg: Message): Anthropic.MessageParam {
         tool_use_id: b.id,
         content: b.output,
         is_error: b.isError,
+        ...(b.cacheBreakpoint ? { cache_control: CACHE } : {}),
       });
     } else if (b.type === "text" && b.text !== "") {
       texts.push({
@@ -50,14 +51,17 @@ function toAnthropicMessage(msg: Message): Anthropic.MessageParam {
   return { role: "user", content: [...results, ...texts] };
 }
 
+/**
+ * No cache breakpoint here: tools come before the system prompt in the cached prefix, so the
+ * system prompt's breakpoint covers them. Anthropic allows 4 breakpoints and the request uses all
+ * four: system, pinned layer, summary, and the end of the history.
+ */
 function toAnthropicTools(tools: ToolDef[]): Anthropic.Tool[] {
-  return tools.map((t, i) => ({
+  return tools.map((t) => ({
     name: t.name,
     description: t.description,
     // ToolDef.inputSchema is provider-neutral JSON Schema; Anthropic types it as an object schema.
     input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
-    // Cache breakpoint on the last tool caches the whole tool list.
-    ...(i === tools.length - 1 ? { cache_control: CACHE } : {}),
   }));
 }
 

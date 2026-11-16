@@ -4,7 +4,7 @@ export type ContentBlock =
   /** `cacheBreakpoint` asks the provider to cache the prompt up to and including this block. */
   | { type: "text"; text: string; cacheBreakpoint?: true }
   | { type: "tool_call"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; id: string; output: string; isError: boolean };
+  | { type: "tool_result"; id: string; output: string; isError: boolean; cacheBreakpoint?: true };
 
 export interface Message {
   role: Role;
