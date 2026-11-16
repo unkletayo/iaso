@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it, vi } from "vitest";
 import { AnthropicProvider, fromAnthropicMessage } from "../src/providers/anthropic.js";
-import type { ChatRequest } from "../src/providers/types.js";
+import type { ChatOptions, ChatRequest } from "../src/providers/types.js";
 
 const entry = { id: "anthropic:claude-sonnet-5-5", apiModel: "claude-sonnet-5-5" };
 const fast = { sleep: () => Promise.resolve(), random: () => 0.5 };
@@ -263,5 +263,82 @@ describe("AnthropicProvider: text block cache breakpoints", () => {
       },
       { type: "text", text: "notes" },
     ]);
+  });
+});
+
+describe("AnthropicProvider: streaming", () => {
+  type Params = Anthropic.MessageCreateParamsNonStreaming;
+  const status = (code: number) =>
+    Object.assign(new Error(`http ${String(code)}`), { status: code });
+
+  /** A fake `messages.stream`: hands out `deltas`, then settles with `final`. */
+  function fakeStream(deltas: string[], final: Promise<Anthropic.Message>) {
+    const calls: { params: Params; options: ChatOptions | undefined }[] = [];
+    const stream = vi.fn((params: Params, options?: ChatOptions) => {
+      calls.push({ params, options });
+      return {
+        on: (_event: "text", listener: (delta: string) => void) => {
+          for (const d of deltas) listener(d);
+        },
+        finalMessage: () => final,
+      };
+    });
+    return { stream, calls };
+  }
+
+  it("streams when the caller wants the text, and never sends a plain request", async () => {
+    const create = vi.fn<(p: Params) => Promise<Anthropic.Message>>();
+    const { stream, calls } = fakeStream(["hel", "lo"], Promise.resolve(reply()));
+    const got: string[] = [];
+    const res = await new AnthropicProvider(entry, create, {}, stream).chat(req, {
+      onText: (d) => got.push(d),
+    });
+    expect(got).toEqual(["hel", "lo"]);
+    expect(res.content).toEqual([{ type: "text", text: "hello" }]);
+    expect(res.usage.inputTokens).toBe(550);
+    expect(create).not.toHaveBeenCalled();
+    expect(calls[0]?.params.model).toBe("claude-sonnet-5-5");
+  });
+
+  it("sends a plain request when nobody listens, or when it cannot stream", async () => {
+    const create = vi.fn<(p: Params) => Promise<Anthropic.Message>>().mockResolvedValue(reply());
+    const { stream } = fakeStream([], Promise.resolve(reply()));
+    await new AnthropicProvider(entry, create, {}, stream).chat(req);
+    expect(stream).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(1);
+    await new AnthropicProvider(entry, create).chat(req, { onText: () => undefined });
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("passes the abort signal to the stream", async () => {
+    const { stream, calls } = fakeStream([], Promise.resolve(reply()));
+    const controller = new AbortController();
+    await new AnthropicProvider(entry, vi.fn(), {}, stream).chat(req, {
+      onText: () => undefined,
+      signal: controller.signal,
+    });
+    expect(calls[0]?.options?.signal).toBe(controller.signal);
+  });
+
+  it("retries a stream that fails before any text, like a plain request", async () => {
+    const stream = vi
+      .fn()
+      .mockReturnValueOnce({ on: () => undefined, finalMessage: () => Promise.reject(status(529)) })
+      .mockReturnValueOnce({ on: () => undefined, finalMessage: () => Promise.resolve(reply()) });
+    const res = await new AnthropicProvider(entry, vi.fn(), fast, stream).chat(req, {
+      onText: () => undefined,
+    });
+    expect(res.content).toEqual([{ type: "text", text: "hello" }]);
+    expect(stream).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a stream that breaks after text was handed out", async () => {
+    const { stream } = fakeStream(["partial"], Promise.reject(status(500)));
+    const got: string[] = [];
+    await expect(
+      new AnthropicProvider(entry, vi.fn(), fast, stream).chat(req, { onText: (d) => got.push(d) }),
+    ).rejects.toThrow(/stream broke after it started: http 500/);
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(got).toEqual(["partial"]);
   });
 });

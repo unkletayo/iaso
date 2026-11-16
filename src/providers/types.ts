@@ -40,10 +40,19 @@ export interface ChatResponse {
 /** Per-call options, kept out of `ChatRequest` so requests stay plain data that can be logged. */
 export interface ChatOptions {
   signal?: AbortSignal;
+  /**
+   * Called with each piece of the model's text as it arrives. With it the adapter streams the
+   * response; without it the call is a plain request. The returned `ChatResponse` is the same
+   * either way.
+   */
+  onText?: (delta: string) => void;
 }
 
 export interface ModelProvider {
   id: string; // e.g. "anthropic:claude-sonnet-5-5"
-  /** `signal` aborts the call, retries included (used for the run's time limit). */
+  /**
+   * `signal` aborts the call, retries included (used for the run's time limit). `onText` streams
+   * the text as it is written (M13 step 13F).
+   */
   chat(req: ChatRequest, options?: ChatOptions): Promise<ChatResponse>;
 }

@@ -65,6 +65,8 @@ export interface LoopOptions {
   trajectory?: TrajectoryWriter;
   /** Where full copies of shortened outputs go. Without it nothing is saved. */
   outputs?: OutputStore;
+  /** The model's text as it is written, with the step it belongs to (M13 step 13F). */
+  onText?: (delta: string, step: number) => void;
 }
 
 export interface LoopResult {
@@ -471,8 +473,16 @@ async function runStep(l: Loop, step: number): Promise<StepOutcome> {
   const started = performance.now();
 
   // M13 step 13C: the model call, retries included, stops when the run's time runs out.
+  const { onText } = opts;
   const response = await opts.provider.chat(built.request, {
     signal: AbortSignal.timeout(Math.max(1, opts.budget.timeLeftMs)),
+    ...(onText === undefined
+      ? {}
+      : {
+          onText: (delta: string) => {
+            onText(delta, step);
+          },
+        }),
   });
   const costUsd = l.cost.add(response.usage);
   l.meter.record(response.usage.inputTokens, built.request.messages.length, built.volatileTokens);
