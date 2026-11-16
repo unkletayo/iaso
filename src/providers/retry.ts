@@ -25,22 +25,40 @@ function statusOf(err: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * A stream that failed after part of the answer had already been handed out. Retrying would hand
+ * out the beginning twice, so this must never be retried: it carries no HTTP status, whatever the
+ * cause had, and `isRetryable` only retries on a status.
+ */
+export class StreamInterruptedError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `The stream broke after it started: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = "StreamInterruptedError";
+    this.cause = cause;
+  }
+}
+
 /** Retry on rate limits (429) and server errors (5xx). Everything else fails fast. */
 export function isRetryable(err: unknown): boolean {
   const status = statusOf(err);
   return status !== undefined && (status === 429 || status >= 500);
 }
 
+/** An aborted `signal` stops the retries: no new attempt starts after it fires. */
 export async function withRetry<T>(
   fn: () => Promise<T>,
   opts: Partial<RetryOptions> = {},
+  signal?: AbortSignal,
 ): Promise<T> {
   const o = { ...DEFAULT_RETRY, ...opts };
   for (let attempt = 1; ; attempt++) {
+    signal?.throwIfAborted();
     try {
       return await fn();
     } catch (err) {
-      if (attempt >= o.maxAttempts || !isRetryable(err)) throw err;
+      if (attempt >= o.maxAttempts || !isRetryable(err) || signal?.aborted === true) throw err;
       const exp = Math.min(o.maxDelayMs, o.baseDelayMs * 2 ** (attempt - 1));
       // Full jitter: random delay in (0, exp].
       await o.sleep(Math.max(1, Math.round(exp * o.random())));

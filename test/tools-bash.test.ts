@@ -33,6 +33,25 @@ describe("bash tool", () => {
     expect(exec).toHaveBeenCalledWith("echo hello", {});
   });
 
+  it("cuts the timeout to the time left in the run, and says so when it fires", async () => {
+    const { sandbox, exec } = sandboxReturning({ exitCode: 124, timedOut: true });
+    const res = await runTool(
+      bashTool,
+      { cmd: "npm test", timeoutSec: 600 },
+      { sandbox, step: 1, timeLeftSec: 45 },
+    );
+    expect(exec).toHaveBeenCalledWith("npm test", { timeoutSec: 45 });
+    expect(res.output).toContain("TIMED OUT after 45s (all the time left in the run)");
+  });
+
+  it("cuts the default timeout too, and leaves it alone when there is time", async () => {
+    const { sandbox, exec } = sandboxReturning({});
+    await runTool(bashTool, { cmd: "ls" }, { sandbox, step: 1, timeLeftSec: 10 });
+    expect(exec).toHaveBeenLastCalledWith("ls", { timeoutSec: 10 });
+    await runTool(bashTool, { cmd: "ls" }, { sandbox, step: 1, timeLeftSec: 900 });
+    expect(exec).toHaveBeenLastCalledWith("ls", {});
+  });
+
   it("forwards timeoutSec to the sandbox", async () => {
     const { sandbox, exec } = sandboxReturning({});
     await runTool(bashTool, { cmd: "sleep 1", timeoutSec: 30 }, { sandbox, step: 1 });

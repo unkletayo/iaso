@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ModelEntry } from "../models.js";
-import { type RetryOptions, withRetry } from "./retry.js";
+import { type RetryOptions, StreamInterruptedError, withRetry } from "./retry.js";
 import type {
+  ChatOptions,
   ChatRequest,
   ChatResponse,
   ContentBlock,
@@ -13,7 +14,20 @@ import type {
 /** The one SDK call the adapter needs. Tests inject a fake. */
 export type CreateMessage = (
   params: Anthropic.MessageCreateParamsNonStreaming,
+  options?: ChatOptions,
 ) => Promise<Anthropic.Message>;
+
+/** The slice of the SDK's `MessageStream` the adapter uses. */
+export interface MessageStreamLike {
+  on(event: "text", listener: (delta: string) => void): unknown;
+  finalMessage(): Promise<Anthropic.Message>;
+}
+
+/** The streaming SDK call. Tests inject a fake. */
+export type StreamMessage = (
+  params: Anthropic.MessageCreateParamsNonStreaming,
+  options?: ChatOptions,
+) => MessageStreamLike;
 
 const CACHE: Anthropic.CacheControlEphemeral = { type: "ephemeral" };
 
@@ -109,11 +123,32 @@ export class AnthropicProvider implements ModelProvider {
     private readonly entry: Pick<ModelEntry, "id" | "apiModel">,
     private readonly create: CreateMessage,
     private readonly retry: Partial<RetryOptions> = {},
+    /** Without it `onText` is ignored and every call is a plain request. */
+    private readonly stream?: StreamMessage,
   ) {
     this.id = entry.id;
   }
 
-  async chat(req: ChatRequest): Promise<ChatResponse> {
+  /** Stream when the caller wants the text as it comes; otherwise one plain request. */
+  private call(
+    params: Anthropic.MessageCreateParamsNonStreaming,
+    options: ChatOptions,
+  ): Promise<Anthropic.Message> {
+    const { stream } = this;
+    const { onText } = options;
+    if (stream === undefined || onText === undefined) return this.create(params, options);
+    let started = false;
+    const s = stream(params, options);
+    s.on("text", (delta) => {
+      started = true;
+      onText(delta);
+    });
+    return s.finalMessage().catch((err: unknown) => {
+      throw started ? new StreamInterruptedError(err) : err;
+    });
+  }
+
+  async chat(req: ChatRequest, options: ChatOptions = {}): Promise<ChatResponse> {
     const params: Anthropic.MessageCreateParamsNonStreaming = {
       model: this.entry.apiModel,
       max_tokens: req.maxOutputTokens,
@@ -121,10 +156,13 @@ export class AnthropicProvider implements ModelProvider {
       system: [{ type: "text", text: req.system, cache_control: CACHE }],
       messages: req.messages.map(toAnthropicMessage),
       ...(req.tools.length > 0 ? { tools: toAnthropicTools(req.tools) } : {}),
+      // Effort steers the adaptive thinking the current models run by default; no `thinking` param
+      // is sent, because the fixed-budget form is rejected by them (M13 step 13E).
+      ...(req.effort === undefined ? {} : { output_config: { effort: req.effort } }),
       // `req.temperature` is deliberately not sent: the SDK marks it deprecated for newer models,
       // and any value other than 1.0 gets a 400. Vary attempts by model instead (M13).
     };
-    const res = await withRetry(() => this.create(params), this.retry);
+    const res = await withRetry(() => this.call(params, options), this.retry, options.signal);
     return fromAnthropicMessage(res);
   }
 }
@@ -132,5 +170,12 @@ export class AnthropicProvider implements ModelProvider {
 /** Build a real provider. The SDK's own retries are off: `withRetry` owns that. */
 export function createAnthropicProvider(entry: ModelEntry, apiKey: string): AnthropicProvider {
   const client = new Anthropic({ apiKey, maxRetries: 0 });
-  return new AnthropicProvider(entry, (params) => client.messages.create(params));
+  const requestOptions = (options?: ChatOptions) =>
+    options?.signal ? { signal: options.signal } : {};
+  return new AnthropicProvider(
+    entry,
+    (params, options) => client.messages.create(params, requestOptions(options)),
+    {},
+    (params, options) => client.messages.stream(params, requestOptions(options)),
+  );
 }

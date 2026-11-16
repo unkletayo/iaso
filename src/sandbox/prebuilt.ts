@@ -6,6 +6,8 @@ export interface PrebuiltRepo {
   dir: string;
   /** Container environment, e.g. to put the repo's own Python environment first on `PATH`. */
   env: readonly string[];
+  /** The image's platform, when it is published for one only. Docker emulates it on other hosts. */
+  platform?: string;
 }
 
 /** SWE-bench instance images keep the repo in `/testbed` and its dependencies in a conda env. */
@@ -16,6 +18,9 @@ export const SWEBENCH_REPO: PrebuiltRepo = {
     "CONDA_PREFIX=/opt/miniconda3/envs/testbed",
     "CONDA_DEFAULT_ENV=testbed",
   ],
+  // The official images are x86_64 only. Without this, an arm64 host (Apple Silicon) asks for an
+  // arm64 image and the pull fails with "no matching manifest".
+  platform: "linux/amd64",
 };
 
 /** The official per-instance image: `owner__repo-123` becomes `owner_1776_repo-123`. */

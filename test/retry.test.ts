@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isRetryable, withRetry } from "../src/providers/retry.js";
+import { StreamInterruptedError, isRetryable, withRetry } from "../src/providers/retry.js";
 
 class HttpError extends Error {
   constructor(readonly status: number) {
@@ -26,6 +26,22 @@ describe("withRetry", () => {
     const sleep = vi.fn(() => Promise.resolve());
     expect(await withRetry(() => Promise.resolve("ok"), { ...fast, sleep })).toBe("ok");
     expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("starts no attempt once the signal has fired", async () => {
+    const fn = vi.fn(() => Promise.resolve("ok"));
+    await expect(withRetry(fn, fast, AbortSignal.abort())).rejects.toThrow();
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("does not retry after the signal fires during an attempt", async () => {
+    const controller = new AbortController();
+    const fn = vi.fn(() => {
+      controller.abort();
+      return Promise.reject(new HttpError(500));
+    });
+    await expect(withRetry(fn, fast, controller.signal)).rejects.toBeInstanceOf(HttpError);
+    expect(fn).toHaveBeenCalledOnce();
   });
 
   it("retries a retryable error then succeeds", async () => {
@@ -65,5 +81,17 @@ describe("withRetry", () => {
       }),
     ).rejects.toThrow();
     expect(delays).toEqual([100, 200, 350, 350]);
+  });
+});
+
+describe("StreamInterruptedError", () => {
+  it("is never retried, whatever broke the stream, and keeps the cause", async () => {
+    const cause = new HttpError(500);
+    const err = new StreamInterruptedError(cause);
+    expect(isRetryable(err)).toBe(false);
+    expect(err.cause).toBe(cause);
+    const fn = vi.fn(() => Promise.reject(err));
+    await expect(withRetry(fn, fast)).rejects.toBe(err);
+    expect(fn).toHaveBeenCalledOnce();
   });
 });

@@ -17,6 +17,8 @@ export interface ToolContext {
   step: number;
   /** Per-run state shared by `notes` and `submit`. The loop provides it; file tools ignore it. */
   run?: RunState;
+  /** Seconds left before the run's time limit. `bash` never waits longer than this. */
+  timeLeftSec?: number;
 }
 
 export interface ToolDefinition<S extends z.ZodType = z.ZodType> {

@@ -13,12 +13,23 @@ export const bashDefinition = defineTool({
   }),
 });
 
-/** Render an exec result for the model. stderr goes last so truncation keeps the end of it. */
-export function formatExecResult(res: ExecResult, timeoutSec: number | undefined): string {
+/** The sandbox's own default, used when the model gives no timeout. */
+export const BASH_DEFAULT_TIMEOUT_SEC = 120;
+
+/**
+ * Render an exec result for the model. stderr goes last so truncation keeps the end of it.
+ * `byRunLimit` says the timeout was cut short to fit the run's remaining time.
+ */
+export function formatExecResult(
+  res: ExecResult,
+  timeoutSec: number | undefined,
+  byRunLimit = false,
+): string {
   const parts = [`exit code: ${String(res.exitCode)}`];
   if (res.timedOut) {
     const limit = timeoutSec === undefined ? "the time limit" : `${String(timeoutSec)}s`;
-    parts.push(`TIMED OUT after ${limit}: the command was killed.`);
+    const why = byRunLimit ? " (all the time left in the run)" : "";
+    parts.push(`TIMED OUT after ${limit}${why}: the command was killed.`);
   }
   if (res.stdout !== "") parts.push(`--- stdout ---\n${res.stdout.replace(/\n$/, "")}`);
   if (res.stderr !== "") parts.push(`--- stderr ---\n${res.stderr.replace(/\n$/, "")}`);
@@ -28,10 +39,14 @@ export function formatExecResult(res: ExecResult, timeoutSec: number | undefined
 
 export const bashTool: Tool<typeof bashDefinition.input> = {
   definition: bashDefinition,
-  async run({ cmd, timeoutSec }, { sandbox }) {
-    const res = await sandbox.exec(cmd, timeoutSec === undefined ? {} : { timeoutSec });
+  async run({ cmd, timeoutSec }, { sandbox, timeLeftSec }) {
+    // M13 step 13C: a command never outlives the run's time limit.
+    const wanted = timeoutSec ?? BASH_DEFAULT_TIMEOUT_SEC;
+    const byRunLimit = timeLeftSec !== undefined && timeLeftSec < wanted;
+    const limit = byRunLimit ? timeLeftSec : timeoutSec;
+    const res = await sandbox.exec(cmd, limit === undefined ? {} : { timeoutSec: limit });
     // A non-zero exit is information (a failing test is the point of running it), not a tool
     // failure. Only a timeout is flagged as an error.
-    return { output: formatExecResult(res, timeoutSec), isError: res.timedOut };
+    return { output: formatExecResult(res, limit, byRunLimit), isError: res.timedOut };
   },
 };

@@ -27,6 +27,8 @@ const ModelEntrySchema = z
     cachedInputPrice: z.number().nonnegative(),
     contextWindow: z.number().int().positive(),
     toolCalls: z.boolean(),
+    /** Accepts a reasoning-effort setting (`--effort`). A model without it ignores the flag. */
+    effort: z.boolean().default(false),
   })
   .refine((m) => m.id === `${m.provider}:${m.apiModel}`, {
     message: "id must equal `<provider>:<apiModel>`",
