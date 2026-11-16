@@ -154,6 +154,19 @@ describe("runPlanPhase: review rounds", () => {
   });
 });
 
+describe("runPipeline: effort", () => {
+  it("gives each phase its own setup's effort", async () => {
+    const s = setup([mockToolCall("p", "submit_plan", plan), submit]);
+    const planProvider = s.provider;
+    await runPipeline({
+      ...s.options,
+      plan: { provider: planProvider, prices, effort: "high" },
+      fix: { ...s.options.fix, effort: "low" },
+    });
+    expect(s.provider.requests.map((r) => r.effort)).toEqual(["high", "low"]);
+  });
+});
+
 describe("runPipeline: streaming", () => {
   it("hands the text of both phases out, each with its own step numbers", async () => {
     const got: [string, number][] = [];

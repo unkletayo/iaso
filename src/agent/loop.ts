@@ -18,6 +18,7 @@ import {
 import type {
   ChatResponse,
   ContentBlock,
+  Effort,
   Message,
   ModelProvider,
   Usage,
@@ -67,6 +68,8 @@ export interface LoopOptions {
   outputs?: OutputStore;
   /** The model's text as it is written, with the step it belongs to (M13 step 13F). */
   onText?: (delta: string, step: number) => void;
+  /** Reasoning effort for every model call of this loop (M13 step 13E). */
+  effort?: Effort;
 }
 
 export interface LoopResult {
@@ -338,6 +341,7 @@ function build(l: Loop): ReturnType<typeof buildRequest> {
     tools: opts.tools.map((t) => toToolDef(t.definition)),
     maxOutputTokens: opts.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
   });
+  if (opts.effort !== undefined) built.request.effort = opts.effort;
   if (built.staleChanged) l.meter.reset();
   return built;
 }

@@ -70,6 +70,18 @@ describe("AnthropicProvider request mapping", () => {
     expect(create.mock.calls[0]?.[1]).toEqual({ signal: controller.signal });
   });
 
+  it("sends effort inside output_config, and no thinking parameter", async () => {
+    const create =
+      vi.fn<(p: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>>();
+    create.mockResolvedValue(reply());
+    await new AnthropicProvider(entry, create).chat({ ...req, effort: "xhigh" });
+    const params = create.mock.calls[0]?.[0];
+    expect(params?.output_config).toEqual({ effort: "xhigh" });
+    expect(params).not.toHaveProperty("thinking");
+    await new AnthropicProvider(entry, create).chat(req);
+    expect(create.mock.calls[1]?.[0]).not.toHaveProperty("output_config");
+  });
+
   it("omits tools when there are none", async () => {
     const create =
       vi.fn<(p: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>>();

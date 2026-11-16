@@ -471,6 +471,14 @@ describe("executeBench", () => {
     };
   }
 
+  it("passes --effort to the plan and fix calls", async () => {
+    const s = await commandSetup({ sample: 1, effort: "medium" });
+    await executeBench(s.opts, s.deps);
+    const provider = s.createProvider.mock.results[0]?.value as MockProvider | undefined;
+    expect(provider?.requests.length).toBeGreaterThan(0);
+    expect(provider?.requests.every((r) => r.effort === "medium")).toBe(true);
+  });
+
   it("on an x64 host removes each image as soon as its task is done", async () => {
     const s = await commandSetup({ sample: 2 });
     await executeBench(s.opts, s.deps);

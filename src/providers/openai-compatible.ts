@@ -166,6 +166,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       ...(req.tools.length > 0 ? { tools: toChatTools(req.tools) } : {}),
       // OpenAI's reasoning models reject any non-default temperature, so only send it elsewhere.
       ...(!isOpenAI && req.temperature !== undefined ? { temperature: req.temperature } : {}),
+      ...(req.effort === undefined ? {} : { reasoning_effort: req.effort }),
     };
     const res = await withRetry(() => this.call(params, options), this.retry, options.signal);
     return fromCompletion(res);

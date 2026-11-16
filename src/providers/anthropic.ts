@@ -156,6 +156,9 @@ export class AnthropicProvider implements ModelProvider {
       system: [{ type: "text", text: req.system, cache_control: CACHE }],
       messages: req.messages.map(toAnthropicMessage),
       ...(req.tools.length > 0 ? { tools: toAnthropicTools(req.tools) } : {}),
+      // Effort steers the adaptive thinking the current models run by default; no `thinking` param
+      // is sent, because the fixed-budget form is rejected by them (M13 step 13E).
+      ...(req.effort === undefined ? {} : { output_config: { effort: req.effort } }),
       // `req.temperature` is deliberately not sent: the SDK marks it deprecated for newer models,
       // and any value other than 1.0 gets a 400. Vary attempts by model instead (M13).
     };

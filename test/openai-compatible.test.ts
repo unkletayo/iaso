@@ -213,6 +213,16 @@ describe("OpenAICompatibleProvider retry", () => {
   });
 });
 
+describe("OpenAICompatibleProvider: effort", () => {
+  it("sends reasoning_effort only when asked", async () => {
+    const create = fake();
+    await new OpenAICompatibleProvider(openai, create).chat({ ...req, effort: "high" });
+    expect(create.mock.calls[0]?.[0]).toMatchObject({ reasoning_effort: "high" });
+    await new OpenAICompatibleProvider(openai, create).chat(req);
+    expect(create.mock.calls[1]?.[0]).not.toHaveProperty("reasoning_effort");
+  });
+});
+
 describe("OpenAICompatibleProvider: streaming", () => {
   const status = (code: number) =>
     Object.assign(new Error(`http ${String(code)}`), { status: code });
