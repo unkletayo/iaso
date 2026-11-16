@@ -18,6 +18,7 @@ import {
 import type {
   ChatResponse,
   ContentBlock,
+  Effort,
   Message,
   ModelProvider,
   Usage,
@@ -65,6 +66,10 @@ export interface LoopOptions {
   trajectory?: TrajectoryWriter;
   /** Where full copies of shortened outputs go. Without it nothing is saved. */
   outputs?: OutputStore;
+  /** The model's text as it is written, with the step it belongs to (M13 step 13F). */
+  onText?: (delta: string, step: number) => void;
+  /** Reasoning effort for every model call of this loop (M13 step 13E). */
+  effort?: Effort;
 }
 
 export interface LoopResult {
@@ -336,6 +341,7 @@ function build(l: Loop): ReturnType<typeof buildRequest> {
     tools: opts.tools.map((t) => toToolDef(t.definition)),
     maxOutputTokens: opts.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
   });
+  if (opts.effort !== undefined) built.request.effort = opts.effort;
   if (built.staleChanged) l.meter.reset();
   return built;
 }
@@ -471,8 +477,16 @@ async function runStep(l: Loop, step: number): Promise<StepOutcome> {
   const started = performance.now();
 
   // M13 step 13C: the model call, retries included, stops when the run's time runs out.
+  const { onText } = opts;
   const response = await opts.provider.chat(built.request, {
     signal: AbortSignal.timeout(Math.max(1, opts.budget.timeLeftMs)),
+    ...(onText === undefined
+      ? {}
+      : {
+          onText: (delta: string) => {
+            onText(delta, step);
+          },
+        }),
   });
   const costUsd = l.cost.add(response.usage);
   l.meter.record(response.usage.inputTokens, built.request.messages.length, built.volatileTokens);

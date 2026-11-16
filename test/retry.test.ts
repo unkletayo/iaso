@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isRetryable, withRetry } from "../src/providers/retry.js";
+import { StreamInterruptedError, isRetryable, withRetry } from "../src/providers/retry.js";
 
 class HttpError extends Error {
   constructor(readonly status: number) {
@@ -81,5 +81,17 @@ describe("withRetry", () => {
       }),
     ).rejects.toThrow();
     expect(delays).toEqual([100, 200, 350, 350]);
+  });
+});
+
+describe("StreamInterruptedError", () => {
+  it("is never retried, whatever broke the stream, and keeps the cause", async () => {
+    const cause = new HttpError(500);
+    const err = new StreamInterruptedError(cause);
+    expect(isRetryable(err)).toBe(false);
+    expect(err.cause).toBe(cause);
+    const fn = vi.fn(() => Promise.reject(err));
+    await expect(withRetry(fn, fast)).rejects.toBe(err);
+    expect(fn).toHaveBeenCalledOnce();
   });
 });

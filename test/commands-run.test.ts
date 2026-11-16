@@ -155,6 +155,97 @@ describe("executeCommand", () => {
     expect(d.lines.some((l) => l.startsWith("check:"))).toBe(false);
   });
 
+  it("run installs, cuts the network, tells the model, and records it", async () => {
+    const w = await workspace();
+    await writeFile(
+      join(w.opts.repo ?? "", ".iaso.json"),
+      JSON.stringify({ installCommand: "npm ci" }),
+    );
+    const provider = new MockProvider([mockToolCall("p", "submit_plan", plan), submit]);
+    const d = deps(provider);
+    const fake = fakeSandbox();
+    const setNetwork = vi.fn(() => Promise.resolve());
+    fake.sandbox.setNetwork = setNetwork;
+    d.deps.createSandbox = () => fake.sandbox;
+    await executeCommand("run", w.opts, d.deps);
+    expect(fake.exec).toHaveBeenCalledWith("npm ci", { timeoutSec: 900 });
+    expect(setNetwork).toHaveBeenCalledWith(false);
+    expect(provider.requests.at(-1)?.system).toContain("The sandbox has no network.");
+    const [runId] = await readdir(w.opts.runs);
+    const dir = join(w.opts.runs, runId ?? "");
+    const info = runInfoSchema.parse(JSON.parse(await readFile(join(dir, "run.json"), "utf8")));
+    expect(info.network).toEqual({ network: "off", installCommand: "npm ci" });
+    expect(await readFile(join(dir, "report.md"), "utf8")).toContain(
+      "- network: off after `npm ci`",
+    );
+  });
+
+  it("run keeps the network on without an install command, and says so", async () => {
+    const w = await workspace();
+    const provider = new MockProvider([mockToolCall("p", "submit_plan", plan), submit]);
+    await executeCommand("run", w.opts, deps(provider).deps);
+    expect(provider.requests.at(-1)?.system).not.toContain("no network");
+    const [runId] = await readdir(w.opts.runs);
+    const report = await readFile(join(w.opts.runs, runId ?? "", "report.md"), "utf8");
+    expect(report).toContain("- network: on for the whole run (no installCommand in .iaso.json)");
+  });
+
+  it("run stops before any model call when the install fails", async () => {
+    const w = await workspace();
+    await writeFile(
+      join(w.opts.repo ?? "", ".iaso.json"),
+      JSON.stringify({ installCommand: "npm ci" }),
+    );
+    const provider = new MockProvider([submit]);
+    const d = deps(provider);
+    const fake = fakeSandbox({}, () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr: "boom",
+      timedOut: false,
+    }));
+    const destroy = vi.fn(() => Promise.resolve());
+    fake.sandbox.destroy = destroy;
+    d.deps.createSandbox = () => fake.sandbox;
+    await expect(executeCommand("run", w.opts, d.deps)).rejects.toThrow(/install command failed/);
+    expect(provider.callCount).toBe(0);
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it("run --effort reaches every plan and fix call and the report, not the compactor", async () => {
+    const w = await workspace();
+    const provider = new MockProvider([mockToolCall("p", "submit_plan", plan), submit]);
+    const d = deps(provider);
+    await executeCommand("run", { ...w.opts, effort: "high" }, d.deps);
+    expect(provider.requests.map((r) => r.effort)).toEqual(["high", "high"]);
+    const [runId] = await readdir(w.opts.runs);
+    const info = runInfoSchema.parse(
+      JSON.parse(await readFile(join(w.opts.runs, runId ?? "", "run.json"), "utf8")),
+    );
+    expect(info.effort).toBe("high");
+    expect(d.lines.some((l) => l.includes("--effort"))).toBe(false);
+  });
+
+  it("run --effort is dropped, with a note, for a model that takes none", async () => {
+    const w = await workspace();
+    const provider = new MockProvider([submit]);
+    const d = deps(provider);
+    await executeCommand(
+      "run",
+      { ...w.opts, plan: false, model: "ollama:qwen2.5-coder:32b", effort: "high" },
+      d.deps,
+    );
+    expect(provider.requests[0]).not.toHaveProperty("effort");
+    expect(d.lines).toContain(
+      "ollama:qwen2.5-coder:32b takes no reasoning-effort setting; --effort high is ignored for it",
+    );
+    const [runId] = await readdir(w.opts.runs);
+    const info = runInfoSchema.parse(
+      JSON.parse(await readFile(join(w.opts.runs, runId ?? "", "run.json"), "utf8")),
+    );
+    expect(info).not.toHaveProperty("effort");
+  });
+
   it("run --approve-plan asks the reviewer", async () => {
     const w = await workspace();
     const d = deps(new MockProvider([mockToolCall("p", "submit_plan", plan), submit]));
@@ -482,6 +573,7 @@ describe("cli options", () => {
         "--model",
         "--plan-model",
         "--compact-model",
+        "--effort",
         "--max-steps",
         "--max-cost",
         "--max-time",
@@ -492,6 +584,24 @@ describe("cli options", () => {
     expect(
       program.commands.find((c) => c.name() === "plan")?.options.map((o) => o.long),
     ).not.toContain("--no-plan");
+  });
+
+  it("rejects an effort level it does not know", async () => {
+    const program = new Command().exitOverride().configureOutput({ writeErr: () => undefined });
+    registerRun(program);
+    await expect(
+      program.parseAsync([
+        "node",
+        "iaso",
+        "run",
+        "--repo",
+        "r",
+        "--issue",
+        "i",
+        "--effort",
+        "ultra",
+      ]),
+    ).rejects.toThrow(/--effort must be one of low, medium, high, xhigh, max/);
   });
 
   it("rejects a non-positive budget", async () => {

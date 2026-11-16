@@ -106,6 +106,11 @@ describe("renderReport", () => {
     expect(md).not.toContain("## Tests run");
   });
 
+  it("names the effort when one was set", () => {
+    expect(renderReport({ ...input, effort: "high" })).toContain("- model: m, effort: high");
+    expect(renderReport(input)).not.toContain("effort:");
+  });
+
   it("shows Iaso's own check, with the end of a failing check's output", () => {
     const md = renderReport({
       ...input,

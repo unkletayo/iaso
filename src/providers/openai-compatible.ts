@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ModelEntry } from "../models.js";
-import { type RetryOptions, withRetry } from "./retry.js";
+import { type RetryOptions, StreamInterruptedError, withRetry } from "./retry.js";
 import type {
   ChatOptions,
   ChatRequest,
@@ -12,11 +12,22 @@ import type {
 } from "./types.js";
 
 type Params = OpenAI.Chat.ChatCompletionCreateParamsNonStreaming;
+/** The request as the adapter builds it: `stream` is left to the call that sends it. */
+type PlainParams = Omit<Params, "stream">;
 type Completion = OpenAI.Chat.ChatCompletion;
 type ChatMessage = OpenAI.Chat.ChatCompletionMessageParam;
 
 /** The one SDK call the adapter needs. Tests inject a fake. */
 export type CreateCompletion = (params: Params, options?: ChatOptions) => Promise<Completion>;
+
+/** The slice of the SDK's `ChatCompletionStream` the adapter uses. */
+export interface CompletionStreamLike {
+  on(event: "content", listener: (delta: string) => void): unknown;
+  finalChatCompletion(): Promise<Completion>;
+}
+
+/** The streaming SDK call. Tests inject a fake. */
+export type StreamCompletion = (params: PlainParams, options?: ChatOptions) => CompletionStreamLike;
 
 function toChatMessages(msg: Message): ChatMessage[] {
   if (msg.role === "assistant") {
@@ -120,13 +131,32 @@ export class OpenAICompatibleProvider implements ModelProvider {
     private readonly entry: Pick<ModelEntry, "id" | "apiModel" | "provider">,
     private readonly create: CreateCompletion,
     private readonly retry: Partial<RetryOptions> = {},
+    /** Without it `onText` is ignored and every call is a plain request. */
+    private readonly stream?: StreamCompletion,
   ) {
     this.id = entry.id;
   }
 
+  /** Stream when the caller wants the text as it comes; otherwise one plain request. */
+  private call(params: PlainParams, options: ChatOptions): Promise<Completion> {
+    const { stream } = this;
+    const { onText } = options;
+    if (stream === undefined || onText === undefined) return this.create(params, options);
+    let started = false;
+    // A streamed response carries no token counts unless asked; without them the cost would read 0.
+    const s = stream({ ...params, stream_options: { include_usage: true } }, options);
+    s.on("content", (delta) => {
+      started = true;
+      onText(delta);
+    });
+    return s.finalChatCompletion().catch((err: unknown) => {
+      throw started ? new StreamInterruptedError(err) : err;
+    });
+  }
+
   async chat(req: ChatRequest, options: ChatOptions = {}): Promise<ChatResponse> {
     const isOpenAI = this.entry.provider === "openai";
-    const params: Params = {
+    const params: PlainParams = {
       model: this.entry.apiModel,
       messages: [{ role: "system", content: req.system }, ...req.messages.flatMap(toChatMessages)],
       // OpenAI wants `max_completion_tokens`; most other compatible servers only know `max_tokens`.
@@ -136,8 +166,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
       ...(req.tools.length > 0 ? { tools: toChatTools(req.tools) } : {}),
       // OpenAI's reasoning models reject any non-default temperature, so only send it elsewhere.
       ...(!isOpenAI && req.temperature !== undefined ? { temperature: req.temperature } : {}),
+      ...(req.effort === undefined ? {} : { reasoning_effort: req.effort }),
     };
-    const res = await withRetry(() => this.create(params, options), this.retry, options.signal);
+    const res = await withRetry(() => this.call(params, options), this.retry, options.signal);
     return fromCompletion(res);
   }
 }
@@ -152,7 +183,12 @@ export function createOpenAICompatibleProvider(
     maxRetries: 0,
     ...(entry.baseUrl !== undefined ? { baseURL: entry.baseUrl } : {}),
   });
-  return new OpenAICompatibleProvider(entry, (params, options) =>
-    client.chat.completions.create(params, options?.signal ? { signal: options.signal } : {}),
+  const requestOptions = (options?: ChatOptions) =>
+    options?.signal ? { signal: options.signal } : {};
+  return new OpenAICompatibleProvider(
+    entry,
+    (params, options) => client.chat.completions.create(params, requestOptions(options)),
+    {},
+    (params, options) => client.chat.completions.stream(params, requestOptions(options)),
   );
 }

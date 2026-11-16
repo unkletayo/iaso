@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BudgetLimits } from "../config.js";
 import type { Plan } from "../context/state.js";
-import type { ModelProvider } from "../providers/types.js";
+import type { Effort, ModelProvider } from "../providers/types.js";
 import type { Sandbox } from "../sandbox/types.js";
 import type { ModelPrices } from "../telemetry/cost.js";
 import { TrajectoryWriter } from "../telemetry/trajectory.js";
@@ -38,6 +38,8 @@ export interface PhaseSetup {
   prices: ModelPrices;
   /** Tokens. Without it the context thresholds are off. */
   contextWindow?: number;
+  /** Sent with every call of the phase. Omitted: the vendor's default. */
+  effort?: Effort;
 }
 
 export interface PipelineOptions {
@@ -57,6 +59,8 @@ export interface PipelineOptions {
   usePlan: boolean;
   /** Asks a person about the plan. Without it the plan is accepted as is. */
   review?: PlanReviewer;
+  /** The model's text as it is written, in both phases. */
+  onText?: (delta: string, step: number) => void;
   now?: () => number;
 }
 
@@ -126,6 +130,8 @@ export async function runPlanPhase(
       budget,
       trajectory: planTrajectory(o.runDir, round),
       ...(feedback ? { feedback } : {}),
+      ...(o.onText === undefined ? {} : { onText: o.onText }),
+      ...(setup.effort === undefined ? {} : { effort: setup.effort }),
     });
     costUsd += result.costUsd;
     steps += result.steps;
@@ -201,6 +207,8 @@ export async function runPipeline(o: PipelineOptions): Promise<PipelineResult> {
     budget: new Budget(remaining(o.limits, planCostUsd, total.elapsedMs), o.now),
     trajectory: new TrajectoryWriter(join(o.runDir, "trajectory.jsonl")),
     outputs,
+    ...(o.onText === undefined ? {} : { onText: o.onText }),
+    ...(o.fix.effort === undefined ? {} : { effort: o.fix.effort }),
   });
   return {
     status: fix.status,
