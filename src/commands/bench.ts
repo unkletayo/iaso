@@ -60,6 +60,8 @@ export interface BenchCommandDeps {
   dockerMemoryBytes: () => Promise<number | undefined>;
   /** Grade the predictions with the official harness. */
   evaluate: (o: HarnessOptions) => Promise<HarnessReport>;
+  /** `process.arch` of the machine running Docker's client. */
+  hostArch: () => string;
   log: (line: string) => void;
 }
 
@@ -86,6 +88,7 @@ export function defaultBenchDeps(): BenchCommandDeps {
       }
     },
     evaluate: (o) => runHarness(o),
+    hostArch: () => process.arch,
     log: (line) => {
       console.log(line);
     },
@@ -158,6 +161,15 @@ export async function executeBench(
       `, folder ${benchDir}`,
   );
 
+  // The harness pulls an image it lacks for the host's own platform, which fails for these
+  // x86_64-only images anywhere else. So on such a host, keep each image until it has been graded.
+  const holdForGrading =
+    opts.evaluate !== false && opts.keepImages !== true && deps.hostArch() !== "x64";
+  if (holdForGrading) {
+    deps.log(
+      `this host is ${deps.hostArch()}: each task's image (about 1 GB) is kept until grading, then removed`,
+    );
+  }
   const summary = await runBench(
     {
       instances,
@@ -168,7 +180,7 @@ export async function executeBench(
       concurrency: opts.concurrency,
       usePlan: opts.plan,
       resume: opts.resume ?? false,
-      keepImages: opts.keepImages ?? false,
+      keepImages: (opts.keepImages ?? false) || holdForGrading,
     },
     {
       createSandbox: deps.createSandbox,
@@ -222,6 +234,7 @@ export async function executeBench(
       log: deps.log,
     });
   } catch (err) {
+    if (holdForGrading) await releaseImages(deps, ids);
     // The predictions are safe on disk. Keep the agent-side numbers and say how to grade later.
     await writeResults(undefined);
     if (err instanceof HarnessError) {
@@ -232,12 +245,18 @@ export async function executeBench(
     }
     throw err;
   }
+  if (holdForGrading) await releaseImages(deps, ids);
   await writeResults(report);
   const resolved = tasks.filter((t) => report.resolved.has(t.instanceId)).length;
   deps.log(
     `resolved ${String(resolved)} of ${String(tasks.length)}. Results: ${join(benchDir, "results.md")}`,
   );
   return summary;
+}
+
+/** Remove the images held for grading. One that is already gone is not an error. */
+async function releaseImages(deps: BenchCommandDeps, ids: Iterable<string>): Promise<void> {
+  for (const id of ids) await deps.removeImage(instanceImage(id)).catch(() => undefined);
 }
 
 function positiveInt(name: string): (value: string) => number {

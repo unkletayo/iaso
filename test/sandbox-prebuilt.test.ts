@@ -103,6 +103,13 @@ describe("DockerSandbox with a prebuilt repo", () => {
   const make = (api: DockerApi) =>
     new DockerSandbox({ runId: "r1", api, handleSignals: false, prebuilt: SWEBENCH_REPO });
 
+  it("pulls and runs the image as linux/amd64, the only platform it is published for", async () => {
+    const { api, specs } = fakeApi();
+    await make(api).start();
+    expect(api.ensureImage).toHaveBeenCalledWith(expect.any(String), "linux/amd64");
+    expect(specs[0]?.platform).toBe("linux/amd64");
+  });
+
   it("keeps one capability and the repo's environment, and drops nothing else", async () => {
     const { api, specs } = fakeApi();
     await make(api).start();
@@ -161,6 +168,7 @@ describe("DockerSandbox without a prebuilt repo", () => {
     await new DockerSandbox({ runId: "r1", api, handleSignals: false }).start();
     expect(specs[0]?.capAdd).toBeUndefined();
     expect(specs[0]?.env).toBeUndefined();
+    expect(specs[0]?.platform).toBeUndefined();
     expect(execs.every((e) => e.user === undefined)).toBe(true);
   });
 });
