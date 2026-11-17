@@ -7,6 +7,18 @@ function makeBudget(limits = BUDGET_DEFAULTS) {
   return { clock, budget: new Budget(limits, () => clock.now) };
 }
 
+describe("Budget.timeLeftMs", () => {
+  it("is a whole number of milliseconds even for a fraction of a minute", () => {
+    // 20 minutes less 1 ms, less 3 ms more, as the fix phase gets it after the plan phase took its
+    // share: in floating point that is 1199995.9999999998 ms, which AbortSignal.timeout rejects.
+    const minutes = 20 - 1 / 60_000 - 3 / 60_000;
+    const budget = new Budget({ maxSteps: 50, maxCostUsd: 1, maxTimeMinutes: minutes }, () => 0);
+    expect(Number.isInteger(budget.timeLeftMs)).toBe(true);
+    expect(budget.timeLeftMs).toBe(1_199_996);
+    expect(() => AbortSignal.timeout(budget.timeLeftMs)).not.toThrow();
+  });
+});
+
 describe("Budget", () => {
   it("has the spec defaults: 50 steps, $1.00, 20 minutes", () => {
     expect(BUDGET_DEFAULTS).toEqual({ maxSteps: 50, maxCostUsd: 1, maxTimeMinutes: 20 });
