@@ -106,6 +106,16 @@ describe("renderReport", () => {
     expect(md).not.toContain("## Tests run");
   });
 
+  it("warns about possible secrets, and says nothing when there are none", () => {
+    const md = renderReport({
+      ...input,
+      secrets: [{ kind: "AWS access key id", file: "src/x.js", line: 5 }],
+    });
+    expect(md).toContain("## Possible secrets in the patch");
+    expect(md).toContain("- AWS access key id in src/x.js, diff line 5");
+    expect(renderReport({ ...input, secrets: [] })).not.toContain("Possible secrets");
+  });
+
   it("lists the attempts when there were several", () => {
     const md = renderReport({
       ...input,

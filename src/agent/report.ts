@@ -4,6 +4,7 @@ import { z } from "zod";
 import { type PipelineResult } from "./pipeline.js";
 import { renderPlan } from "./plan.js";
 import { type NetworkState, describeNetwork, networkStateSchema } from "../sandbox/install.js";
+import { type SecretFinding, describeFinding, secretFindingSchema } from "./secrets.js";
 import { type Verification, describeCheck, verificationSchema } from "./verify.js";
 
 export interface ReportInput {
@@ -23,6 +24,8 @@ export interface ReportInput {
   network?: NetworkState;
   /** Set when the run made more than one attempt (M13 step 13G). */
   attempts?: AttemptsSummary;
+  /** What looked like a secret in the patch (M13 step 13H). Empty when nothing did. */
+  secrets?: SecretFinding[];
 }
 
 export const attemptsSummarySchema = z.object({
@@ -76,6 +79,8 @@ export const runInfoSchema = z.object({
   network: networkStateSchema.optional(),
   /** Absent unless the run made more than one attempt. */
   attempts: attemptsSummarySchema.optional(),
+  /** Absent in runs made before the scan existed; otherwise the findings, possibly none. */
+  secrets: z.array(secretFindingSchema).optional(),
 });
 export type RunInfo = z.infer<typeof runInfoSchema>;
 
@@ -108,6 +113,7 @@ export function runInfoOf(input: ReportInput): RunInfo {
     ...(input.verification === undefined ? {} : { verification: input.verification }),
     ...(input.network === undefined ? {} : { network: input.network }),
     ...(input.attempts === undefined ? {} : { attempts: input.attempts }),
+    ...(input.secrets === undefined ? {} : { secrets: input.secrets }),
   };
 }
 
@@ -152,6 +158,7 @@ export function renderReport({
   verification,
   network,
   attempts,
+  secrets,
 }: ReportInput): string {
   const state = result.fix?.state;
   const sub = result.fix?.submission;
@@ -214,6 +221,16 @@ export function renderReport({
           `- attempt ${String(a.attempt)}: ${a.status}, check ${a.check}, ${String(a.steps)} steps, $${a.costUsd.toFixed(4)}` +
           (a.attempt === attempts.kept ? " (kept)" : ""),
       ),
+    );
+  }
+  if (secrets !== undefined && secrets.length > 0) {
+    lines.push(
+      "",
+      "## Possible secrets in the patch",
+      "",
+      "Do not open a pull request with these in it. Remove each one, or confirm it is not a secret:",
+      "",
+      bullets(secrets.map(describeFinding)),
     );
   }
   lines.push(
