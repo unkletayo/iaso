@@ -16,6 +16,8 @@ import { type Verification, notVerified, verifyRun } from "./verify.js";
 
 export interface AttemptRecord {
   attempt: number;
+  /** The fix-phase model of this attempt. */
+  model: string;
   /** Where this attempt's trajectory, outputs and plan are. */
   dir: string;
   result: PipelineResult;
@@ -43,6 +45,11 @@ export interface AttemptsOptions {
   /** Runs after `start()`: install, cut the network. Its result is recorded with the attempt. */
   prepare: (sandbox: Sandbox) => Promise<NetworkState>;
   pipeline: Omit<PipelineOptions, "sandbox" | "limits" | "runDir" | "approvedPlan">;
+  /**
+   * The pipeline options of one attempt, when they differ by attempt (another model for the fix
+   * phase, see `--attempt-models`). Without it every attempt uses `pipeline`.
+   */
+  pipelineFor?: (attempt: number) => AttemptsOptions["pipeline"];
   /** `.iaso.json` `testCommand`, for the post-run check. */
   testCommand?: string | undefined;
   log: (line: string) => void;
@@ -83,14 +90,15 @@ async function runOne(
   approvedPlan: Plan | undefined,
 ): Promise<AttemptRecord> {
   const dir = attemptDir(o.runDir, attempt, o.attempts);
+  const pipeline = o.pipelineFor?.(attempt) ?? o.pipeline;
   const sandbox = o.createSandbox(attempt);
   try {
     // Inside the try, so a sandbox that fails to start is still cleaned up (`destroy` is idempotent).
     await sandbox.start();
     const network = await o.prepare(sandbox);
-    const extraRules = o.pipeline.extraRules ?? [];
+    const extraRules = pipeline.extraRules ?? [];
     const result = await runPipeline({
-      ...o.pipeline,
+      ...pipeline,
       extraRules: network.network === "off" ? [...extraRules, OFFLINE_RULE] : extraRules,
       sandbox,
       limits,
@@ -113,7 +121,7 @@ async function runOne(
             ),
           )
         : notVerified(`the run ended with status ${result.status}`);
-    return { attempt, dir, result, verification, network };
+    return { attempt, model: pipeline.fix.provider.id, dir, result, verification, network };
   } finally {
     await sandbox.destroy();
   }
@@ -141,7 +149,10 @@ export async function runAttempts(o: AttemptsOptions): Promise<AttemptsOutcome> 
       stoppedBecause = "the time limit was reached";
       break;
     }
-    if (o.attempts > 1) o.log(`attempt ${String(attempt)} of ${String(o.attempts)}`);
+    if (o.attempts > 1) {
+      const model = (o.pipelineFor?.(attempt) ?? o.pipeline).fix.provider.id;
+      o.log(`attempt ${String(attempt)} of ${String(o.attempts)} (${model})`);
+    }
     const record = await runOne(o, attempt, limits, approvedPlan);
     records.push(record);
     spent += record.result.costUsd;
