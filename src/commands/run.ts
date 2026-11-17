@@ -52,6 +52,8 @@ export interface RunCommandOptions {
   effort?: Effort;
   /** Attempts at the fix, each in a fresh sandbox, within one budget (M13 step 13G). Default 1. */
   attempts?: number;
+  /** Fix-phase models for the attempts after the first, used in turn. Empty: the main model. */
+  attemptModels?: string[];
   approvePlan?: boolean;
   /** False with `--no-plan`. */
   plan: boolean;
@@ -156,6 +158,30 @@ function setupFor(id: string, deps: CommandDeps, effort?: Effort): PhaseSetup {
     contextWindow: entry.contextWindow,
     ...(effort !== undefined && entry.effort ? { effort } : {}),
   };
+}
+
+/** Commander argument parser for `--attempt-models`: a comma-separated list of catalogue ids. */
+export function parseAttemptModels(value: string): string[] {
+  const ids = value
+    .split(",")
+    .map((id) => id.trim())
+    .filter((id) => id !== "");
+  if (ids.length === 0) throw new InvalidArgumentError("--attempt-models needs at least one id");
+  const catalogue = loadCatalogue();
+  for (const id of ids) {
+    try {
+      findModel(catalogue, id);
+    } catch (err) {
+      throw new InvalidArgumentError(err instanceof Error ? err.message : String(err));
+    }
+  }
+  return ids;
+}
+
+/** The fix-phase setup of attempt `attempt`: the main one first, then the alternatives in turn. */
+export function setupForAttempt<T>(attempt: number, main: T, alternatives: readonly T[]): T {
+  if (attempt === 1 || alternatives.length === 0) return main;
+  return alternatives[(attempt - 2) % alternatives.length] ?? main;
 }
 
 /** Commander argument parser for `--effort`. */
@@ -309,6 +335,20 @@ async function runWithSource(
   }
 
   const attempts = opts.attempts ?? 1;
+  const alternatives = (opts.attemptModels ?? []).map((id) => setupFor(id, deps, opts.effort));
+  if (alternatives.length > 0 && attempts === 1) {
+    deps.log("--attempt-models does nothing with one attempt; give --attempts 2 or more");
+  }
+  const pipeline = {
+    fix,
+    plan,
+    compact,
+    issue,
+    // When an attempt's network is cut, `runAttempts` adds the offline rule for that attempt.
+    extraRules: config.extraRules,
+    usePlan: opts.plan,
+    ...(review ? { review } : {}),
+  };
   deps.log(`run ${runId}: starting sandbox`);
   const outcome = await runAttempts({
     attempts,
@@ -316,16 +356,8 @@ async function runWithSource(
     runDir,
     createSandbox: makeSandbox,
     prepare,
-    pipeline: {
-      fix,
-      plan,
-      compact,
-      issue,
-      // When an attempt's network is cut, `runAttempts` adds the offline rule for that attempt.
-      extraRules: config.extraRules,
-      usePlan: opts.plan,
-      ...(review ? { review } : {}),
-    },
+    pipeline,
+    pipelineFor: (attempt) => ({ ...pipeline, fix: setupForAttempt(attempt, fix, alternatives) }),
     testCommand: config.testCommand,
     log: deps.log,
   });
@@ -343,6 +375,7 @@ async function runWithSource(
               : { stoppedBecause: outcome.stoppedBecause }),
             each: outcome.attempts.map((a) => ({
               attempt: a.attempt,
+              model: a.model,
               status: a.result.status,
               check: a.verification.status,
               costUsd: a.result.costUsd,
@@ -442,6 +475,11 @@ export function registerRun(program: Command, deps: () => CommandDeps = defaultD
       "attempts at the fix, each in a fresh sandbox within the same budget; the first whose patch passes the check is kept",
       positive("--attempts"),
       1,
+    )
+    .option(
+      "--attempt-models <ids>",
+      "comma-separated models for the fix phase of the attempts after the first, used in turn (default: --model)",
+      parseAttemptModels,
     )
     .action(async (opts: RunCommandOptions) => {
       await executeCommand("run", opts, deps());

@@ -33,6 +33,8 @@ export const attemptsSummarySchema = z.object({
   each: z.array(
     z.object({
       attempt: z.number().int().min(1),
+      /** Absent in records made before models could vary by attempt. */
+      model: z.string().optional(),
       status: z.string(),
       check: z.string(),
       costUsd: z.number(),
@@ -211,7 +213,7 @@ export function renderReport({
       "",
       ...attempts.each.map(
         (a) =>
-          `- attempt ${String(a.attempt)}: ${a.status}, check ${a.check}, ${String(a.steps)} steps, $${a.costUsd.toFixed(4)}` +
+          `- attempt ${String(a.attempt)}${a.model === undefined ? "" : ` (${a.model})`}: ${a.status}, check ${a.check}, ${String(a.steps)} steps, $${a.costUsd.toFixed(4)}` +
           (a.attempt === attempts.kept ? " (kept)" : ""),
       ),
     );

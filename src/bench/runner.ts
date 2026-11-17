@@ -101,6 +101,8 @@ export interface BenchOptions {
 export interface BenchDeps {
   createSandbox: (instance: SweInstance, runId: string) => Sandbox;
   fix: PhaseSetup;
+  /** Fix-phase setups for the attempts after the first, used in turn (see `--attempt-models`). */
+  attemptFix?: PhaseSetup[];
   plan?: PhaseSetup;
   compact?: PhaseSetup;
   /** Remove an instance image to save disk. Failures are ignored. */
@@ -189,6 +191,21 @@ export async function runBench(o: BenchOptions, deps: BenchDeps): Promise<BenchS
           issue: renderSweIssue(instance),
           usePlan: o.usePlan,
         },
+        ...(deps.attemptFix !== undefined && deps.attemptFix.length > 0
+          ? {
+              pipelineFor: (attempt: number) => {
+                const alts = (deps.attemptFix ?? []);
+                const fix = attempt === 1 ? deps.fix : (alts[(attempt - 2) % alts.length] ?? deps.fix);
+                return {
+                  fix,
+                  ...(deps.plan ? { plan: deps.plan } : {}),
+                  ...(deps.compact ? { compact: deps.compact } : {}),
+                  issue: renderSweIssue(instance),
+                  usePlan: o.usePlan,
+                };
+              },
+            }
+          : {}),
         log: deps.log,
       });
       const res = outcome.kept.result;
