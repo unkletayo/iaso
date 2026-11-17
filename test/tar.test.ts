@@ -22,7 +22,8 @@ describe("makeTar", () => {
     );
     expect(listing).toContain("repo/");
     expect(listing).toContain("hello.txt");
-    expect(listing).toMatch(/1000\s+1000\s+8\s/);
+    // bsdtar (macOS) prints "1000  1000", GNU tar (Linux) "1000/1000".
+    expect(listing).toMatch(/1000[\s/]+1000\s+8\s/);
   });
 
   it("pads content to 512-byte blocks and ends with two zero blocks", () => {
@@ -91,6 +92,6 @@ describe("tarDirectory", () => {
     expect(listing).toContain("a.txt");
     expect(listing).toContain("sub/b.txt");
     expect(listing).not.toContain("node_modules");
-    expect(listing).toMatch(/1000\s+1000/);
+    expect(listing).toMatch(/1000[\s/]+1000/);
   });
 });
