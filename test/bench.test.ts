@@ -143,7 +143,11 @@ describe("runBench", () => {
       check: "not_checked",
       attempts: { kept: 1, made: 2 },
     });
-    expect(task?.costUsd).toBeCloseTo((2 * (await readTasks(s.options.benchDir))[0]!.costUsd) / 2);
+    const single = await setup({ count: 1 });
+    await runBench(single.options, single.deps);
+    const [one] = await readTasks(single.options.benchDir);
+    expect(one?.costUsd ?? 0).toBeGreaterThan(0);
+    expect(task?.costUsd).toBeCloseTo(2 * (one?.costUsd ?? 0), 10);
     // The model is told the network is off.
     expect(s.provider.requests[0]?.system).toContain("The sandbox has no network.");
   });
