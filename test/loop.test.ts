@@ -367,6 +367,14 @@ describe("runLoop: the time limit inside a step", () => {
     expect(res.message).toBe("time limit reached (20 minutes)");
   });
 
+  it("runs with a time limit that is a fraction of a minute", async () => {
+    const s = setup([submitCall()], {
+      budget: new Budget({ ...limits, maxTimeMinutes: 20 - 1 / 60_000 - 3 / 60_000 }, () => 0),
+    });
+    const res = await s.run();
+    expect(res.status).toBe("submitted");
+  });
+
   it("still reports a real model error as an error while there is time left", async () => {
     const provider = { id: "mock:broken", chat: () => Promise.reject(new Error("bad request")) };
     const res = await setup([], { provider, budget: new Budget(limits) }).run();

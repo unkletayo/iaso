@@ -32,9 +32,13 @@ export class Budget {
     return this.now() - this.startedAt;
   }
 
-  /** Time left before the time limit, never below 0. Caps tool and model calls inside a step. */
+  /**
+   * Time left before the time limit, never below 0, as a whole number of milliseconds: a limit
+   * handed down from an earlier phase is a fraction of a minute, and `AbortSignal.timeout` and
+   * `setTimeout` reject a delay that is not an integer.
+   */
   get timeLeftMs(): number {
-    return Math.max(0, this.limits.maxTimeMinutes * 60_000 - this.elapsedMs);
+    return Math.max(0, Math.ceil(this.limits.maxTimeMinutes * 60_000 - this.elapsedMs));
   }
 
   /** How much of the most used limit is gone. Drives the "wrap up" nudge. */
