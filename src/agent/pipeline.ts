@@ -13,7 +13,7 @@ import { readFileTool } from "../tools/read-file.js";
 import { FileOutputStore, makeReadOutputTool } from "../tools/read-output.js";
 import { submitTool } from "../tools/submit.js";
 import { Budget } from "./budget.js";
-import { type LoopResult, type RunStatus, runLoop } from "./loop.js";
+import { type LoopHooks, type LoopResult, type RunStatus, runLoop } from "./loop.js";
 import { type PlanOptions, renderPlan, runPlan } from "./plan.js";
 import { buildSystemPrompt } from "./prompts.js";
 
@@ -61,8 +61,9 @@ export interface PipelineOptions {
   approvedPlan?: Plan;
   /** Asks a person about the plan. Without it the plan is accepted as is. */
   review?: PlanReviewer;
-  /** The model's text as it is written, in both phases. */
-  onText?: (delta: string, step: number) => void;
+  hooks?: LoopHooks;
+  /** Return true to cancel the run between steps. */
+  cancel?: () => boolean;
   now?: () => number;
 }
 
@@ -132,7 +133,7 @@ export async function runPlanPhase(
       budget,
       trajectory: planTrajectory(o.runDir, round),
       ...(feedback ? { feedback } : {}),
-      ...(o.onText === undefined ? {} : { onText: o.onText }),
+      ...(o.hooks ? { hooks: o.hooks } : {}),
       ...(setup.effort === undefined ? {} : { effort: setup.effort }),
     });
     costUsd += result.costUsd;
@@ -209,7 +210,8 @@ export async function runPipeline(o: PipelineOptions): Promise<PipelineResult> {
     budget: new Budget(remaining(o.limits, planCostUsd, total.elapsedMs), o.now),
     trajectory: new TrajectoryWriter(join(o.runDir, "trajectory.jsonl")),
     outputs,
-    ...(o.onText === undefined ? {} : { onText: o.onText }),
+    ...(o.hooks ? { hooks: o.hooks } : {}),
+    ...(o.cancel ? { cancel: o.cancel } : {}),
     ...(o.fix.effort === undefined ? {} : { effort: o.fix.effort }),
   });
   return {
