@@ -154,6 +154,18 @@ describe("runPlanPhase: review rounds", () => {
   });
 });
 
+describe("runPipeline: an approved plan", () => {
+  it("pins the given plan and runs no plan phase", async () => {
+    const s = setup([submit]);
+    const res = await runPipeline({ ...s.options, approvedPlan: plan });
+    expect(res.status).toBe("submitted");
+    expect(res.plan).toEqual(plan);
+    expect(res.planSteps).toBe(0);
+    expect(s.provider.requests).toHaveLength(1);
+    expect(JSON.stringify(s.provider.requests[0]?.messages[0])).toContain("off by one");
+  });
+});
+
 describe("runPipeline: effort", () => {
   it("gives each phase its own setup's effort", async () => {
     const s = setup([mockToolCall("p", "submit_plan", plan), submit]);

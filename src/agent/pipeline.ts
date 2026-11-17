@@ -57,6 +57,8 @@ export interface PipelineOptions {
   extraRules?: readonly string[];
   /** Run the plan phase first. */
   usePlan: boolean;
+  /** A plan made earlier (another attempt of the same run): pinned as is, no plan phase. */
+  approvedPlan?: Plan;
   /** Asks a person about the plan. Without it the plan is accepted as is. */
   review?: PlanReviewer;
   /** The model's text as it is written, in both phases. */
@@ -164,10 +166,10 @@ export async function runPipeline(o: PipelineOptions): Promise<PipelineResult> {
   // Kept so `iaso replay --context` can show the issue the model saw.
   await mkdir(o.runDir, { recursive: true });
   await writeFile(join(o.runDir, "issue.md"), o.issue, "utf8");
-  let plan: Plan | undefined;
+  let plan: Plan | undefined = o.approvedPlan;
   let planCostUsd = 0;
   let planSteps = 0;
-  if (o.usePlan) {
+  if (o.usePlan && plan === undefined) {
     const stage = await runPlanPhase(o, total);
     planCostUsd = stage.costUsd;
     planSteps = stage.steps;

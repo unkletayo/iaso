@@ -21,7 +21,26 @@ export interface ReportInput {
   verification?: Verification;
   /** Whether the sandbox network was cut after install (M13 step 13D). */
   network?: NetworkState;
+  /** Set when the run made more than one attempt (M13 step 13G). */
+  attempts?: AttemptsSummary;
 }
+
+export const attemptsSummarySchema = z.object({
+  kept: z.number().int().min(1),
+  asked: z.number().int().min(1),
+  totalCostUsd: z.number(),
+  stoppedBecause: z.string().optional(),
+  each: z.array(
+    z.object({
+      attempt: z.number().int().min(1),
+      status: z.string(),
+      check: z.string(),
+      costUsd: z.number(),
+      steps: z.number(),
+    }),
+  ),
+});
+export type AttemptsSummary = z.infer<typeof attemptsSummarySchema>;
 
 /**
  * `run.json`: the facts about a run that other commands (`iaso pr`) need, so they never have to read
@@ -55,6 +74,8 @@ export const runInfoSchema = z.object({
   verification: verificationSchema.optional(),
   /** Absent in runs made before step 13D. */
   network: networkStateSchema.optional(),
+  /** Absent unless the run made more than one attempt. */
+  attempts: attemptsSummarySchema.optional(),
 });
 export type RunInfo = z.infer<typeof runInfoSchema>;
 
@@ -86,6 +107,7 @@ export function runInfoOf(input: ReportInput): RunInfo {
     patchBytes: Buffer.byteLength(input.result.diff),
     ...(input.verification === undefined ? {} : { verification: input.verification }),
     ...(input.network === undefined ? {} : { network: input.network }),
+    ...(input.attempts === undefined ? {} : { attempts: input.attempts }),
   };
 }
 
@@ -129,6 +151,7 @@ export function renderReport({
   result,
   verification,
   network,
+  attempts,
 }: ReportInput): string {
   const state = result.fix?.state;
   const sub = result.fix?.submission;
@@ -175,6 +198,23 @@ export function renderReport({
   }
   if (verification) {
     lines.push("", "## Checked by Iaso after the run", "", ...renderVerification(verification));
+  }
+  if (attempts) {
+    lines.push(
+      "",
+      "## Attempts",
+      "",
+      `kept attempt ${String(attempts.kept)} of ${String(attempts.each.length)} made (${String(attempts.asked)} asked); $${attempts.totalCostUsd.toFixed(4)} in all` +
+        (attempts.stoppedBecause === undefined
+          ? ""
+          : `; stopped early: ${attempts.stoppedBecause}`),
+      "",
+      ...attempts.each.map(
+        (a) =>
+          `- attempt ${String(a.attempt)}: ${a.status}, check ${a.check}, ${String(a.steps)} steps, $${a.costUsd.toFixed(4)}` +
+          (a.attempt === attempts.kept ? " (kept)" : ""),
+      ),
+    );
   }
   lines.push(
     "",

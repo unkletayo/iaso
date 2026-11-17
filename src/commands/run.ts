@@ -7,13 +7,14 @@ import {
   type PhaseSetup,
   type PlanReviewer,
   type ReviewDecision,
-  runPipeline,
   runPlanPhase,
 } from "../agent/pipeline.js";
 import { renderPlan } from "../agent/plan.js";
 import { writeReport } from "../agent/report.js";
-import { describeCheck, notVerified, verifyRun } from "../agent/verify.js";
-import { OFFLINE_RULE, installThenCutNetwork } from "../sandbox/install.js";
+import { type AttemptsSummary } from "../agent/report.js";
+import { runAttempts } from "../agent/attempts.js";
+import { describeCheck } from "../agent/verify.js";
+import { installThenCutNetwork } from "../sandbox/install.js";
 import { BUDGET_DEFAULTS, type BudgetLimits, IasoConfigSchema, loadConfig } from "../config.js";
 import { type Catalogue, findModel, loadCatalogue } from "../models.js";
 import {
@@ -49,6 +50,8 @@ export interface RunCommandOptions {
   compactModel?: string;
   /** Reasoning effort for the plan and fix phases. The compactor never gets it. */
   effort?: Effort;
+  /** Attempts at the fix, each in a fresh sandbox, within one budget (M13 step 13G). Default 1. */
+  attempts?: number;
   approvePlan?: boolean;
   /** False with `--no-plan`. */
   plan: boolean;
@@ -271,16 +274,21 @@ async function runWithSource(
     if (notes !== "") issue = `${source.issue}\n\n${notes}`;
   }
 
-  deps.log(`run ${runId}: starting sandbox`);
-  const sandbox = deps.createSandbox({
-    runId,
-    repoPath: source.repoPath,
-    ...(config.image === undefined ? {} : { image: config.image }),
-  });
-  await sandbox.start();
-  try {
-    const network = await installThenCutNetwork(sandbox, config.installCommand, deps.log);
-    if (mode === "plan") {
+  const makeSandbox = (attempt: number): Sandbox =>
+    deps.createSandbox({
+      runId: attempt === 1 ? runId : `${runId}-a${String(attempt)}`,
+      repoPath: source.repoPath,
+      ...(config.image === undefined ? {} : { image: config.image }),
+    });
+  const prepare = (sandbox: Sandbox) =>
+    installThenCutNetwork(sandbox, config.installCommand, deps.log);
+
+  if (mode === "plan") {
+    deps.log(`run ${runId}: starting sandbox`);
+    const sandbox = makeSandbox(1);
+    await sandbox.start();
+    try {
+      await prepare(sandbox);
       const stage = await runPlanPhase({
         fix,
         plan,
@@ -294,37 +302,53 @@ async function runWithSource(
       deps.log(
         `${renderPlan(stage.plan)}\n\nplan cost: $${stage.costUsd.toFixed(4)}, saved to ${join(runDir, "plan.json")}`,
       );
-      return;
+    } finally {
+      await sandbox.destroy();
     }
-    const result = await runPipeline({
+    return;
+  }
+
+  const attempts = opts.attempts ?? 1;
+  deps.log(`run ${runId}: starting sandbox`);
+  const outcome = await runAttempts({
+    attempts,
+    limits,
+    runDir,
+    createSandbox: makeSandbox,
+    prepare,
+    pipeline: {
       fix,
       plan,
       compact,
-      sandbox,
       issue,
-      limits,
-      runDir,
-      extraRules:
-        network.network === "off" ? [...config.extraRules, OFFLINE_RULE] : config.extraRules,
+      // When an attempt's network is cut, `runAttempts` adds the offline rule for that attempt.
+      extraRules: config.extraRules,
       usePlan: opts.plan,
       ...(review ? { review } : {}),
-    });
-    // The diff is already in `result`, so the check cannot change the patch that gets written.
-    if (result.status === "submitted") deps.log(`run ${runId}: checking the patch`);
-    const verification =
-      result.status === "submitted"
-        ? // A check that breaks must not cost the report and patch the run already paid for.
-          await verifyRun({
-            sandbox,
-            testsRun: result.fix?.state.testsRun ?? [],
-            testsAdded: result.fix?.submission?.testsAdded ?? [],
-            testCommand: config.testCommand,
-          }).catch((err: unknown) =>
-            notVerified(
-              `the check itself failed: ${err instanceof Error ? err.message : String(err)}`,
-            ),
-          )
-        : notVerified(`the run ended with status ${result.status}`);
+    },
+    testCommand: config.testCommand,
+    log: deps.log,
+  });
+  const { result, verification, network } = outcome.kept;
+  {
+    const summary: AttemptsSummary | undefined =
+      attempts === 1
+        ? undefined
+        : {
+            kept: outcome.kept.attempt,
+            asked: attempts,
+            totalCostUsd: outcome.totalCostUsd,
+            ...(outcome.stoppedBecause === undefined
+              ? {}
+              : { stoppedBecause: outcome.stoppedBecause }),
+            each: outcome.attempts.map((a) => ({
+              attempt: a.attempt,
+              status: a.result.status,
+              check: a.verification.status,
+              costUsd: a.result.costUsd,
+              steps: a.result.steps,
+            })),
+          };
     await writeReport(runDir, {
       runId,
       issue: source.issue,
@@ -340,7 +364,14 @@ async function runWithSource(
       result,
       verification,
       network,
+      ...(summary === undefined ? {} : { attempts: summary }),
     });
+    if (summary !== undefined) {
+      deps.log(
+        `attempts: kept ${String(summary.kept)} of ${String(summary.each.length)}, $${summary.totalCostUsd.toFixed(4)} in all` +
+          (summary.stoppedBecause === undefined ? "" : ` (${summary.stoppedBecause})`),
+      );
+    }
     if (result.status === "submitted") {
       deps.log(`check: ${verification.status}`);
       deps.log(`  ${describeCheck("reproduction", verification.reproduction)}`);
@@ -354,8 +385,6 @@ async function runWithSource(
         `Run ended with status ${result.status}${result.message ? `: ${result.message}` : ""}`,
       );
     }
-  } finally {
-    await sandbox.destroy();
   }
 }
 
@@ -408,6 +437,12 @@ export function registerRun(program: Command, deps: () => CommandDeps = defaultD
     )
     .option("--approve-plan", "show the plan and wait for y, n, or feedback")
     .option("--no-plan", "skip the plan phase")
+    .option(
+      "--attempts <n>",
+      "attempts at the fix, each in a fresh sandbox within the same budget; the first whose patch passes the check is kept",
+      positive("--attempts"),
+      1,
+    )
     .action(async (opts: RunCommandOptions) => {
       await executeCommand("run", opts, deps());
     });
