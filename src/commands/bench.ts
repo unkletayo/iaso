@@ -21,7 +21,7 @@ import { SANDBOX_LIMITS } from "../sandbox/images.js";
 import { SWEBENCH_REPO, instanceImage } from "../sandbox/prebuilt.js";
 import type { Sandbox } from "../sandbox/types.js";
 import { type SweInstance, loadSweLite, sampleInstances } from "../sources/swebench.js";
-import { DEFAULT_MODEL, defaultCompactModel, parseEffort } from "./run.js";
+import { DEFAULT_MODEL, defaultCompactModel, parseAttemptModels, parseEffort } from "./run.js";
 
 /** The one dataset so far. The option exists so others (SWE-bench Multilingual) can join. */
 export const DATASETS = ["swebench-lite"] as const;
@@ -38,6 +38,8 @@ export interface BenchCommandOptions {
   effort?: Effort;
   /** Attempts per task (13G). Default 1. */
   attempts?: number;
+  /** Fix-phase models for the attempts after the first, used in turn. */
+  attemptModels?: string[];
   compactModel?: string;
   /** False with `--no-plan`. */
   plan: boolean;
@@ -145,6 +147,7 @@ export async function executeBench(
   const plan = opts.planModel === undefined ? undefined : phase(opts.planModel, deps, opts.effort);
   const compactId = opts.compactModel ?? defaultCompactModel(loadCatalogue(), opts.model);
   const compact = compactId === opts.model ? undefined : phase(compactId, deps);
+  const attemptFix = (opts.attemptModels ?? []).map((id) => phase(id, deps, opts.effort));
 
   const memory = await deps.dockerMemoryBytes();
   const needed = opts.concurrency * SANDBOX_LIMITS.memoryBytes;
@@ -198,6 +201,7 @@ export async function executeBench(
     {
       createSandbox: deps.createSandbox,
       fix,
+      ...(attemptFix.length > 0 ? { attemptFix } : {}),
       ...(plan ? { plan } : {}),
       ...(compact ? { compact } : {}),
       removeImage: deps.removeImage,
@@ -320,6 +324,11 @@ export function registerBench(
       "attempts per task, each in a fresh sandbox within the task's cap; the first whose patch passes Iaso's check is kept",
       positiveInt("--attempts"),
       1,
+    )
+    .option(
+      "--attempt-models <ids>",
+      "comma-separated models for the fix phase of the attempts after the first, used in turn (default: --model)",
+      parseAttemptModels,
     )
     .option("--no-plan", "skip the plan phase")
     .option(
