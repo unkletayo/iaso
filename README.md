@@ -150,7 +150,7 @@ iaso replay <runId> --context 12   # print what the model saw at step 12
 
 ## Benchmark
 
-`iaso bench` runs a seeded sample of SWE-bench Lite in Docker using the official per-instance images, grades with the official harness, and writes `predictions.jsonl` and `results.md`. `--sample` is required (no default, because it costs money).
+`iaso bench` runs a seeded sample of SWE-bench Lite in Docker using the official per-instance images, grades with the official harness, and writes `predictions.jsonl` and `results.md`. `--sample` is required (no default, because it costs money). `--attempts <n>` gives each task up to `n` attempts within its cost cap, keeping the first whose patch passes Iaso's own check; `tasks.jsonl` records the check and the attempts, and the cost of all of them.
 
 ```sh
 iaso bench --sample 10 --seed 42 \
