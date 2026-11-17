@@ -36,6 +36,8 @@ export interface BenchCommandOptions {
   planModel?: string;
   /** Reasoning effort for the plan and fix phases. */
   effort?: Effort;
+  /** Attempts per task (13G). Default 1. */
+  attempts?: number;
   compactModel?: string;
   /** False with `--no-plan`. */
   plan: boolean;
@@ -189,6 +191,7 @@ export async function executeBench(
       ...(opts.maxTotalCost === undefined ? {} : { maxTotalCostUsd: opts.maxTotalCost }),
       concurrency: opts.concurrency,
       usePlan: opts.plan,
+      ...(opts.attempts === undefined ? {} : { attempts: opts.attempts }),
       resume: opts.resume ?? false,
       keepImages: (opts.keepImages ?? false) || holdForGrading,
     },
@@ -312,6 +315,12 @@ export function registerBench(
       parseEffort,
     )
     .option("--compact-model <id>", "model that summarises old steps")
+    .option(
+      "--attempts <n>",
+      "attempts per task, each in a fresh sandbox within the task's cap; the first whose patch passes Iaso's check is kept",
+      positiveInt("--attempts"),
+      1,
+    )
     .option("--no-plan", "skip the plan phase")
     .option(
       "--max-steps <n>",

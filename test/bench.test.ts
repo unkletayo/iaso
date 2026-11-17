@@ -126,6 +126,40 @@ describe("runBench", () => {
     });
   });
 
+  it("with --attempts gives each attempt a fresh sandbox and adds up what they cost", async () => {
+    // No test file changes in the fake sandbox, so no attempt can be verified: both run.
+    const s = await setup({ count: 1, script: submits(2), options: { attempts: 2 } });
+    const summary = await runBench(s.options, s.deps);
+    expect(summary.ran).toBe(1);
+    expect(s.runIds).toHaveLength(2);
+    expect(s.runIds[1]).toBe(`${s.runIds[0] ?? ""}-a2`);
+    expect(s.events.filter((e) => e.startsWith("destroy"))).toHaveLength(2);
+    expect(s.events.filter((e) => e.startsWith("network false"))).toHaveLength(2);
+    expect(s.provider.callCount).toBe(2);
+    const [task] = await readTasks(s.options.benchDir);
+    expect(task).toMatchObject({
+      status: "submitted",
+      steps: 2,
+      check: "not_checked",
+      attempts: { kept: 1, made: 2 },
+    });
+    const single = await setup({ count: 1 });
+    await runBench(single.options, single.deps);
+    const [one] = await readTasks(single.options.benchDir);
+    expect(one?.costUsd ?? 0).toBeGreaterThan(0);
+    expect(task?.costUsd).toBeCloseTo(2 * (one?.costUsd ?? 0), 10);
+    // The model is told the network is off.
+    expect(s.provider.requests[0]?.system).toContain("The sandbox has no network.");
+  });
+
+  it("without --attempts records the check and no attempts field", async () => {
+    const s = await setup({ count: 1 });
+    await runBench(s.options, s.deps);
+    const [task] = await readTasks(s.options.benchDir);
+    expect(task?.check).toBe("not_checked");
+    expect(task).not.toHaveProperty("attempts");
+  });
+
   it("cuts the network before the agent starts, so the fix cannot be looked up", async () => {
     const s = await setup({ count: 1 });
     await runBench(s.options, s.deps);
