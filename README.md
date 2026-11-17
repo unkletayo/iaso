@@ -88,7 +88,9 @@ git apply runs/<runId>/patch.diff
 
 Iaso never pushes, opens a PR, or comments on the issue. You review the patch and do that yourself.
 
-A run stops at its limits: `--max-steps` (default 50), `--max-cost` (default \$1), `--max-time` (default 20 minutes). `--effort <low|medium|high|xhigh|max>` sets how hard the model thinks in the plan and fix phases; without it the model's own default applies. Models that take no such setting (see `effort` in `models.json`) ignore it with a note. Real repos with slow test suites may need more:
+A run stops at its limits: `--max-steps` (default 50), `--max-cost` (default \$1), `--max-time` (default 20 minutes). `--effort <low|medium|high|xhigh|max>` sets how hard the model thinks in the plan and fix phases; without it the model's own default applies. Models that take no such setting (see `effort` in `models.json`) ignore it with a note.
+
+`--attempts <n>` makes up to `n` attempts at the fix, each in a fresh sandbox, all within the same cost and time limits. The plan is made once. The run stops at the first attempt whose patch passes Iaso's own check, and otherwise keeps the attempt with the best check result; `report.md` lists them all, and each attempt's files are in `runs/<id>/attempt-<n>/`. Real repos with slow test suites may need more:
 
 ```sh
 iaso run --github <url> --max-cost 2 --max-time 40

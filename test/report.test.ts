@@ -106,6 +106,29 @@ describe("renderReport", () => {
     expect(md).not.toContain("## Tests run");
   });
 
+  it("lists the attempts when there were several", () => {
+    const md = renderReport({
+      ...input,
+      attempts: {
+        kept: 2,
+        asked: 3,
+        totalCostUsd: 0.5,
+        stoppedBecause: "the time limit was reached",
+        each: [
+          { attempt: 1, status: "submitted", check: "failed", costUsd: 0.3, steps: 9 },
+          { attempt: 2, status: "submitted", check: "verified", costUsd: 0.2, steps: 7 },
+        ],
+      },
+    });
+    expect(md).toContain("## Attempts");
+    expect(md).toContain(
+      "kept attempt 2 of 2 made (3 asked); $0.5000 in all; stopped early: the time limit was reached",
+    );
+    expect(md).toContain("- attempt 1: submitted, check failed, 9 steps, $0.3000");
+    expect(md).toContain("- attempt 2: submitted, check verified, 7 steps, $0.2000 (kept)");
+    expect(renderReport(input)).not.toContain("## Attempts");
+  });
+
   it("names the effort when one was set", () => {
     expect(renderReport({ ...input, effort: "high" })).toContain("- model: m, effort: high");
     expect(renderReport(input)).not.toContain("effort:");

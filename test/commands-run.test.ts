@@ -246,6 +246,52 @@ describe("executeCommand", () => {
     expect(info).not.toHaveProperty("effort");
   });
 
+  it("run --attempts makes a fresh sandbox per attempt, keeps the best, and records them", async () => {
+    const w = await workspace();
+    // Neither attempt can be verified (no test file), so both rank the same and the first is kept.
+    const provider = new MockProvider([mockToolCall("p", "submit_plan", plan), submit, submit]);
+    const d = deps(provider);
+    const ids: string[] = [];
+    d.deps.createSandbox = (o) => {
+      ids.push(o.runId);
+      return fakeSandbox().sandbox;
+    };
+    await executeCommand("run", { ...w.opts, attempts: 2 }, d.deps);
+    const [runId] = await readdir(w.opts.runs);
+    expect(ids).toEqual([runId, `${runId ?? ""}-a2`]);
+    // The plan is made once and reused: three model calls, not four.
+    expect(provider.callCount).toBe(3);
+    const dir = join(w.opts.runs, runId ?? "");
+    const info = runInfoSchema.parse(JSON.parse(await readFile(join(dir, "run.json"), "utf8")));
+    expect(info.attempts).toMatchObject({
+      kept: 1,
+      asked: 2,
+      each: [{ attempt: 1 }, { attempt: 2 }],
+    });
+    expect(await readFile(join(dir, "report.md"), "utf8")).toContain("## Attempts");
+    // Each attempt kept its own folder, and the kept one's files are at the top too.
+    await expect(
+      readFile(join(dir, "attempt-1", "trajectory.jsonl"), "utf8"),
+    ).resolves.toBeTruthy();
+    await expect(
+      readFile(join(dir, "attempt-2", "trajectory.jsonl"), "utf8"),
+    ).resolves.toBeTruthy();
+    await expect(readFile(join(dir, "trajectory.jsonl"), "utf8")).resolves.toBeTruthy();
+    expect(d.lines).toContain("attempts: kept 1 of 2, $0.0001 in all");
+  });
+
+  it("run with one attempt keeps the old layout and says nothing about attempts", async () => {
+    const w = await workspace();
+    const d = deps(new MockProvider([mockToolCall("p", "submit_plan", plan), submit]));
+    await executeCommand("run", w.opts, d.deps);
+    const [runId] = await readdir(w.opts.runs);
+    const info = runInfoSchema.parse(
+      JSON.parse(await readFile(join(w.opts.runs, runId ?? "", "run.json"), "utf8")),
+    );
+    expect(info).not.toHaveProperty("attempts");
+    expect(d.lines.some((l) => l.startsWith("attempts:"))).toBe(false);
+  });
+
   it("run --approve-plan asks the reviewer", async () => {
     const w = await workspace();
     const d = deps(new MockProvider([mockToolCall("p", "submit_plan", plan), submit]));
@@ -574,6 +620,7 @@ describe("cli options", () => {
         "--plan-model",
         "--compact-model",
         "--effort",
+        "--attempts",
         "--max-steps",
         "--max-cost",
         "--max-time",
