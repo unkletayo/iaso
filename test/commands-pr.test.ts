@@ -420,6 +420,35 @@ describe("iaso pr: the draft", () => {
     ).not.toContain("did not settle");
   });
 
+  it("blocks the draft with a marker when the patch holds a possible secret", () => {
+    const info = {
+      runId: "r",
+      model: "m",
+      status: "submitted",
+      steps: 1,
+      costUsd: 0,
+      elapsedMs: 1,
+      source: { label: "a/b#1", issueUrl: "https://github.com/a/b/issues/1" },
+      assumptions: [],
+      testsAdded: [],
+      testsRun: [],
+      patchBytes: 1,
+    };
+    const flagged = buildDraft(
+      { ...info, secrets: [{ kind: "GitHub token", file: "ci.yml", line: 9 }] },
+      DIFF,
+      conventions,
+      undefined,
+    );
+    expect(flagged.body).toContain("## Possible secrets");
+    expect(flagged.body).toMatch(
+      /\[TODO: Iaso found what looks like a secret in the patch \(1, see report\.md\)/,
+    );
+    expect(flagged.reminders.join("\n")).toContain("GitHub token in ci.yml, diff line 9");
+    const clean = buildDraft({ ...info, secrets: [] }, DIFF, conventions, undefined);
+    expect(clean.body).not.toContain("Possible secrets");
+  });
+
   it("blocks the draft with a marker when Iaso's own check failed, and reports every check", () => {
     const info = {
       runId: "r",

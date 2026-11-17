@@ -280,6 +280,28 @@ describe("executeCommand", () => {
     expect(d.lines).toContain("attempts: kept 1 of 2, $0.0001 in all");
   });
 
+  it("run scans the patch for secrets, records the findings, and warns", async () => {
+    const w = await workspace();
+    const d = deps(new MockProvider([mockToolCall("p", "submit_plan", plan), submit]));
+    const fake = fakeSandbox();
+    fake.sandbox.diff = () =>
+      Promise.resolve(`+++ b/.env\n+ANTHROPIC_API_KEY=sk-ant-${"k".repeat(30)}\n`);
+    d.deps.createSandbox = () => fake.sandbox;
+    await executeCommand("run", w.opts, d.deps);
+    const [runId] = await readdir(w.opts.runs);
+    const dir = join(w.opts.runs, runId ?? "");
+    const info = runInfoSchema.parse(JSON.parse(await readFile(join(dir, "run.json"), "utf8")));
+    expect(info.secrets).toEqual([{ kind: "Anthropic API key", file: ".env", line: 2 }]);
+    expect(d.lines).toContain(
+      "warning: the patch holds what looks like a secret (1). Do not open a pull request with it:",
+    );
+    // The patch itself is still written: the person must be able to see what was flagged.
+    expect(await readFile(join(dir, "patch.diff"), "utf8")).toContain("sk-ant-");
+    expect(await readFile(join(dir, "report.md"), "utf8")).toContain(
+      "## Possible secrets in the patch",
+    );
+  });
+
   it("run with one attempt keeps the old layout and says nothing about attempts", async () => {
     const w = await workspace();
     const d = deps(new MockProvider([mockToolCall("p", "submit_plan", plan), submit]));

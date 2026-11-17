@@ -29,7 +29,7 @@ If the rules pass, it spins up a Docker sandbox, runs the agent loop, and writes
 - `report.md` — what it did, the plan, every test run, cost, step count
 - `run.json` — structured metadata for `iaso pr`
 
-Before writing them, Iaso checks a submitted patch itself instead of taking the agent's word. It re-runs the agent's passing test command with the fix (it must pass) and on the original code with only the new test files kept (it must fail), and runs `testCommand` from `.iaso.json` when one is set. The result (`verified`, `failed` or `not_checked`, each with its reason) goes into `report.md` and `run.json`. A failed check is only reported, never retried, and it puts a `[TODO]` marker in the `iaso pr` draft.
+Before writing them, Iaso checks a submitted patch itself instead of taking the agent's word. It re-runs the agent's passing test command with the fix (it must pass) and on the original code with only the new test files kept (it must fail), and runs `testCommand` from `.iaso.json` when one is set. The result (`verified`, `failed` or `not_checked`, each with its reason) goes into `report.md` and `run.json`. A failed check is only reported, never retried, and it puts a `[TODO]` marker in the `iaso pr` draft. The patch's added lines are also scanned for things that look like secrets (API keys, tokens, private keys, `password = "…"`); a finding is named by kind, file and line, never quoted, and also puts a `[TODO]` marker in the draft.
 
 You apply the patch, run the tests yourself, and open the PR if it looks good.
 

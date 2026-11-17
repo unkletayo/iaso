@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import type { Command } from "commander";
 import { z } from "zod";
 import { type RunInfo, runInfoSchema } from "../agent/report.js";
+import { describeFinding } from "../agent/secrets.js";
 import { describeCheck } from "../agent/verify.js";
 import {
   MAX_PRS_PER_REPO_PER_DAY,
@@ -152,6 +153,15 @@ export function buildDraft(
       ].join("\n"),
     );
   }
+  if (info.secrets !== undefined && info.secrets.length > 0) {
+    sections.push(
+      [
+        "## Possible secrets",
+        `${TODO_MARK}: Iaso found what looks like a secret in the patch (${String(info.secrets.length)}, see report.md). ` +
+          "Remove it from the patch, or confirm it is not one, then delete this section]",
+      ].join("\n"),
+    );
+  }
   const testing = ["## Testing", added];
   // A failed check is never quoted as a result; it blocks the draft until a person deals with it.
   if (info.verification?.status === "failed") {
@@ -195,6 +205,12 @@ export function buildDraft(
       : `The agent noted these test runs (unchecked, and earlier ones may be from before the fix): ${info.testsRun
           .map((t) => `${t.cmd} (${t.result})`)
           .join(", ")}.`,
+    ...(info.secrets === undefined || info.secrets.length === 0
+      ? []
+      : [
+          `Possible secrets in the patch: ${info.secrets.map(describeFinding).join("; ")}. ` +
+            "Nothing is sent until the marker for them is gone.",
+        ]),
     info.verification === undefined
       ? "Iaso did not check this patch after the run (the run is older than the check)."
       : `Iaso's check after the run: ${info.verification.status}. ` +

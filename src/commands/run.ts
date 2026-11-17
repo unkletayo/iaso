@@ -13,6 +13,7 @@ import { renderPlan } from "../agent/plan.js";
 import { writeReport } from "../agent/report.js";
 import { type AttemptsSummary } from "../agent/report.js";
 import { runAttempts } from "../agent/attempts.js";
+import { describeFinding, scanDiff } from "../agent/secrets.js";
 import { describeCheck } from "../agent/verify.js";
 import { installThenCutNetwork } from "../sandbox/install.js";
 import { BUDGET_DEFAULTS, type BudgetLimits, IasoConfigSchema, loadConfig } from "../config.js";
@@ -330,6 +331,7 @@ async function runWithSource(
     log: deps.log,
   });
   const { result, verification, network } = outcome.kept;
+  const secrets = scanDiff(result.diff);
   {
     const summary: AttemptsSummary | undefined =
       attempts === 1
@@ -365,7 +367,14 @@ async function runWithSource(
       verification,
       network,
       ...(summary === undefined ? {} : { attempts: summary }),
+      secrets,
     });
+    if (secrets.length > 0) {
+      deps.log(
+        `warning: the patch holds what looks like a secret (${String(secrets.length)}). Do not open a pull request with it:`,
+      );
+      for (const f of secrets) deps.log(`  ${describeFinding(f)}`);
+    }
     if (summary !== undefined) {
       deps.log(
         `attempts: kept ${String(summary.kept)} of ${String(summary.each.length)}, $${summary.totalCostUsd.toFixed(4)} in all` +
