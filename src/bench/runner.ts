@@ -1,8 +1,9 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { type PhaseSetup, type PipelineStatus, runPipeline } from "../agent/pipeline.js";
+import type { PhaseSetup, PipelineStatus } from "../agent/pipeline.js";
 import type { BudgetLimits } from "../config.js";
+import { runAttempts } from "../agent/attempts.js";
 import { instanceImage } from "../sandbox/prebuilt.js";
 import type { Sandbox } from "../sandbox/types.js";
 import { type SweInstance, renderSweIssue } from "../sources/swebench.js";
@@ -28,6 +29,10 @@ export const taskRecordSchema = z.object({
   runDir: z.string(),
   patchBytes: z.number(),
   message: z.string().optional(),
+  /** Iaso's own check of the kept patch (13A); absent in records made before it existed. */
+  check: z.enum(["verified", "failed", "not_checked"]).optional(),
+  /** Set when the task was given more than one attempt (13G). `costUsd` and `steps` cover them all. */
+  attempts: z.object({ kept: z.number().int().min(1), made: z.number().int().min(1) }).optional(),
 });
 export type TaskRecord = z.infer<typeof taskRecordSchema>;
 
@@ -86,6 +91,8 @@ export interface BenchOptions {
   maxTotalCostUsd?: number;
   concurrency: number;
   usePlan: boolean;
+  /** Attempts per task, each in a fresh sandbox within the task's cap (13G). Default 1. */
+  attempts?: number;
   /** Skip instances that already have a record. Without it, a folder with records is refused. */
   resume: boolean;
   keepImages: boolean;
@@ -157,34 +164,49 @@ export async function runBench(o: BenchOptions, deps: BenchDeps): Promise<BenchS
     const started = Date.now();
     const id = instance.instanceId;
     const runDir = join(o.benchDir, "runs", id);
-    const sandbox = deps.createSandbox(instance, `bench-${id}-${Date.now().toString(36)}`);
+    const stamp = Date.now().toString(36);
     let record: TaskRecord;
     let patch = "";
     try {
-      await sandbox.start();
-      // The fix is public. With no network the agent cannot look it up.
-      await sandbox.setNetwork(false);
-      const res = await runPipeline({
-        fix: deps.fix,
-        ...(deps.plan ? { plan: deps.plan } : {}),
-        ...(deps.compact ? { compact: deps.compact } : {}),
-        sandbox,
-        issue: renderSweIssue(instance),
+      const outcome = await runAttempts({
+        attempts: o.attempts ?? 1,
         limits: { ...o.limits, maxCostUsd: cap },
         runDir,
-        usePlan: o.usePlan,
+        createSandbox: (attempt) =>
+          deps.createSandbox(
+            instance,
+            `bench-${id}-${stamp}${attempt === 1 ? "" : `-a${String(attempt)}`}`,
+          ),
+        prepare: async (sandbox) => {
+          // The fix is public. With no network the agent cannot look it up.
+          await sandbox.setNetwork(false);
+          return { network: "off", installCommand: "(none: the image is prebuilt)" };
+        },
+        pipeline: {
+          fix: deps.fix,
+          ...(deps.plan ? { plan: deps.plan } : {}),
+          ...(deps.compact ? { compact: deps.compact } : {}),
+          issue: renderSweIssue(instance),
+          usePlan: o.usePlan,
+        },
+        log: deps.log,
       });
-      // Whatever the sandbox holds is the answer, even if the run ran out of budget before submit.
+      const res = outcome.kept.result;
+      // Whatever the kept sandbox held is the answer, even if the run ran out of budget before submit.
       patch = res.diff;
       record = {
         instanceId: id,
         status: res.status,
-        steps: res.steps,
-        costUsd: res.costUsd,
+        steps: outcome.attempts.reduce((n, a) => n + a.result.steps, 0),
+        costUsd: outcome.totalCostUsd,
         durationMs: Date.now() - started,
         runDir: join("runs", id),
         patchBytes: Buffer.byteLength(patch),
         ...(res.message === undefined ? {} : { message: res.message }),
+        check: outcome.kept.verification.status,
+        ...((o.attempts ?? 1) === 1
+          ? {}
+          : { attempts: { kept: outcome.kept.attempt, made: outcome.attempts.length } }),
       };
     } catch (err) {
       record = {
@@ -215,7 +237,6 @@ export async function runBench(o: BenchOptions, deps: BenchDeps): Promise<BenchS
           (record.message && record.status === "error" ? ` (${record.message})` : ""),
       );
     } finally {
-      await sandbox.destroy().catch(() => undefined);
       if (!o.keepImages) await deps.removeImage(instanceImage(id)).catch(() => undefined);
     }
   }

@@ -84,8 +84,9 @@ async function runOne(
 ): Promise<AttemptRecord> {
   const dir = attemptDir(o.runDir, attempt, o.attempts);
   const sandbox = o.createSandbox(attempt);
-  await sandbox.start();
   try {
+    // Inside the try, so a sandbox that fails to start is still cleaned up (`destroy` is idempotent).
+    await sandbox.start();
     const network = await o.prepare(sandbox);
     const extraRules = o.pipeline.extraRules ?? [];
     const result = await runPipeline({
