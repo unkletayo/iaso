@@ -250,8 +250,9 @@ async function executeAll(l: Loop, calls: ToolCall[], step: number): Promise<Exe
       done.push({ call, shown: NOT_RUN_TIME, raw: NOT_RUN_TIME, isError: true });
       continue;
     }
-    done.push(await execute(l, call, step, i + 1));
-    const d = done[done.length - 1]!;
+    const result = await execute(l, call, step, i + 1);
+    done.push(result);
+    const d = result;
     l.opts.hooks?.onToolResult?.(step, d.call.id, d.call.name, d.shown, d.isError);
     if (l.run.submission ?? l.run.plan) break;
   }

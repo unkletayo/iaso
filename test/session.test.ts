@@ -8,13 +8,6 @@ import { type SessionEvent, type SessionOptions, createSession } from "../src/co
 import { fakeSandbox } from "./helpers/fake-sandbox.js";
 
 const prices = { inputPrice: 3, outputPrice: 15, cachedInputPrice: 0.3 };
-const plan = {
-  rootCauseHypothesis: "off by one",
-  filesToChange: [{ path: "a.js", change: "x" }],
-  testPlan: "t",
-  risks: [],
-  steps: ["s"],
-};
 const submit = mockToolCall("s", "submit", {
   summary: "done",
   prTitle: "Fix it",

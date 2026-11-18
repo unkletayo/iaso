@@ -17,21 +17,14 @@ import { createProvider } from "../providers/registry.js";
 import type { ModelProvider } from "../providers/types.js";
 import { DockerSandbox } from "../sandbox/docker.js";
 import type { Sandbox } from "../sandbox/types.js";
-import { githubSource, parseIssueUrl } from "../sources/github.js";
-import { localSource } from "../sources/local.js";
+import { parseIssueUrl } from "../sources/github.js";
 import type { Source } from "../sources/types.js";
-import {
-  createSession,
-  type Session,
-  type SessionControl,
-  type SessionEvent,
-} from "../core/session.js";
+import { createSession, type Session, type SessionEvent } from "../core/session.js";
 import type { PipelineResult } from "../agent/pipeline.js";
 import {
   DEFAULT_MODEL,
   type CommandDeps,
   type RunCommandOptions,
-  type SourceChoice,
   chooseSource,
   defaultCompactModel,
   defaultResolveSource,
@@ -187,7 +180,9 @@ export function startControlReader(stdin: NodeJS.ReadableStream, session: Sessio
       // Ignore malformed lines.
     }
   });
-  return () => rl.close();
+  return () => {
+    rl.close();
+  };
 }
 
 function emit(out: NodeJS.WritableStream, event: ServeEvent): void {
@@ -311,7 +306,7 @@ export async function executeServeCommand(
     resolveSource: deps.resolveSource,
     createProvider: deps.createProvider,
     createSandbox: deps.createSandbox,
-    review: async () => ({ kind: "approve" as const }),
+    review: () => Promise.resolve({ kind: "approve" as const }),
     log: deps.log,
   };
   const fix = setupFor(opts.model, fixDeps);

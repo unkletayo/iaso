@@ -59,8 +59,9 @@ class PushQueue<T> implements AsyncIterable<T> {
   private done = false;
 
   push(item: T): void {
-    if (this.waiters.length > 0) {
-      this.waiters.shift()!({ value: item, done: false });
+    const waiter = this.waiters.shift();
+    if (waiter !== undefined) {
+      waiter({ value: item, done: false });
     } else {
       this.items.push(item);
     }
@@ -68,7 +69,7 @@ class PushQueue<T> implements AsyncIterable<T> {
 
   close(): void {
     this.done = true;
-    for (const waiter of this.waiters) waiter({ value: undefined as unknown as T, done: true });
+    for (const waiter of this.waiters) waiter({ value: undefined, done: true });
     this.waiters = [];
   }
 
@@ -76,7 +77,7 @@ class PushQueue<T> implements AsyncIterable<T> {
     return {
       next: (): Promise<IteratorResult<T>> => {
         if (this.items.length > 0) {
-          return Promise.resolve({ value: this.items.shift()!, done: false });
+          return Promise.resolve({ value: this.items.shift() as T, done: false });
         }
         if (this.done) {
           return Promise.resolve({ value: undefined as unknown as T, done: true });

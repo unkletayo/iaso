@@ -61,12 +61,13 @@ function setup(
 
   const deps: ServeDeps = {
     checkClaim: () => Promise.resolve({ blockers: [], warnings: [] }),
-    resolveSource: async () => ({
-      repoPath: runDir,
-      issue: "ISSUE",
-      label: "local",
-      cleanup: async () => {},
-    }),
+    resolveSource: () =>
+      Promise.resolve({
+        repoPath: runDir,
+        issue: "ISSUE",
+        label: "local",
+        cleanup: async () => {},
+      }),
     createProvider: () => provider,
     createSandbox: () => fake.sandbox,
     log: () => {},
@@ -236,7 +237,7 @@ describe("executeServeCommand event sequence", () => {
       (e): e is TextPart => e.type === "message.part" && e.part.kind === "text",
     );
     expect(textParts.length).toBeGreaterThan(0);
-    expect(textParts[0]!.part.delta).toBe("thinking...");
+    expect(textParts[0]?.part.delta).toBe("thinking...");
   });
 
   it("all events carry the same run_id", async () => {
@@ -247,16 +248,14 @@ describe("executeServeCommand event sequence", () => {
   });
 
   it("emits run.cancelled when cancel is sent in response to awaiting", async () => {
-    const { deps, opts, events } = setup([submit], (a) => ({ kind: "cancel" }));
+    const { deps, opts, events } = setup([submit], (_) => ({ kind: "cancel" }));
     await executeServeCommand(opts, deps);
-    const last = events[events.length - 1]!;
-    expect(last.type).toBe("run.cancelled");
+    const last = events.at(-1);
+    expect(last?.type).toBe("run.cancelled");
   });
 
   it("rejected tool call produces an error tool_result, then run.failed after script exhausted", async () => {
-    let calls = 0;
     const { deps, opts, events } = setup([submit, submit, submit], (a) => {
-      calls++;
       return { kind: "reject", id: a.id };
     });
     await executeServeCommand(opts, deps);
@@ -274,7 +273,7 @@ describe("executeServeCommand event sequence", () => {
       );
       expect(result?.part.error).toBe(true);
     }
-    const last = events[events.length - 1]!;
-    expect(last.type).toBe("run.failed");
+    const last = events.at(-1);
+    expect(last?.type).toBe("run.failed");
   });
 });

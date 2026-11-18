@@ -74,7 +74,9 @@ export class WorktreeSandbox implements Sandbox {
     try {
       return await fsReadFile(absPath, "utf8");
     } catch (err: unknown) {
-      throw new Error(`Cannot read ${path}: ${(err as NodeJS.ErrnoException).message}`);
+      throw new Error(`Cannot read ${path}: ${(err as NodeJS.ErrnoException).message}`, {
+        cause: err,
+      });
     }
   }
 
@@ -86,13 +88,14 @@ export class WorktreeSandbox implements Sandbox {
 
   async diff(): Promise<string> {
     const wt = this.requireWorktree();
-    const base = this.baseCommit!;
+    if (this.baseCommit === undefined) throw new Error("Sandbox is not running");
+    const base = this.baseCommit;
     const result = await runInDir(`git add -A && git diff --cached --binary ${base}`, wt);
     if (result.exitCode !== 0) throw new Error(`git diff failed: ${result.stderr.trim()}`);
     return result.stdout;
   }
 
-  async setNetwork(_enabled: boolean): Promise<void> {
+  async setNetwork(_: boolean): Promise<void> {
     // no-op: cannot control network access on the host
   }
 
@@ -157,13 +160,13 @@ async function runInDir(
       proc.kill("SIGKILL");
     }, timeoutSec * 1000);
 
-    proc.stdout?.on("data", (chunk: Buffer) => {
+    proc.stdout.on("data", (chunk: Buffer) => {
       if (totalOut < MAX_CAPTURE_BYTES) {
         chunks.push({ out: true, data: chunk });
         totalOut += chunk.length;
       }
     });
-    proc.stderr?.on("data", (chunk: Buffer) => {
+    proc.stderr.on("data", (chunk: Buffer) => {
       if (totalErr < MAX_CAPTURE_BYTES) {
         chunks.push({ out: false, data: chunk });
         totalErr += chunk.length;
