@@ -136,9 +136,7 @@ export function RunDetailPage({ runId }: RunDetailProps) {
                 <span className="text-zinc-600">suite</span>
                 <span
                   className={
-                    info.verification.suite.status === "pass"
-                      ? "text-emerald-400"
-                      : "text-red-400"
+                    info.verification.suite.status === "pass" ? "text-emerald-400" : "text-red-400"
                   }
                 >
                   {info.verification.suite.status}
@@ -175,7 +173,9 @@ export function RunDetailPage({ runId }: RunDetailProps) {
             <p className="text-xs text-zinc-500 mb-1">Tests added</p>
             <ul className="text-xs font-mono text-zinc-400 space-y-0.5">
               {info.testsAdded.map((t, i) => (
-                <li key={i} className="truncate">— {t}</li>
+                <li key={i} className="truncate">
+                  — {t}
+                </li>
               ))}
             </ul>
           </div>
@@ -188,11 +188,7 @@ export function RunDetailPage({ runId }: RunDetailProps) {
             <ul className="text-xs font-mono space-y-0.5">
               {data.runInfo.testsRun.map((t, i) => (
                 <li key={i} className="flex gap-2">
-                  <span
-                    className={
-                      t.result === "pass" ? "text-emerald-500" : "text-red-500"
-                    }
-                  >
+                  <span className={t.result === "pass" ? "text-emerald-500" : "text-red-500"}>
                     {t.result}
                   </span>
                   <span className="text-zinc-500 truncate">{t.cmd}</span>

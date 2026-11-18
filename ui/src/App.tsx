@@ -1,12 +1,6 @@
 import { useState, useCallback, useEffect, useReducer } from "react";
 import { api } from "./api";
-import type {
-  RunSummary,
-  LiveRun,
-  ServeEvent,
-  RunStatus,
-  AwaitRequest,
-} from "./types";
+import type { RunSummary, LiveRun, ServeEvent, RunStatus, AwaitRequest } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { NewRun } from "./pages/NewRun";
 import { LiveFeed } from "./pages/LiveFeed";
@@ -14,9 +8,7 @@ import { RunDetailPage } from "./pages/RunDetail";
 import { useRunStream } from "./hooks/useRunStream";
 
 type View =
-  | { kind: "new-run" }
-  | { kind: "live"; runId: string }
-  | { kind: "detail"; runId: string };
+  { kind: "new-run" } | { kind: "live"; runId: string } | { kind: "detail"; runId: string };
 
 type LiveRunAction =
   | { type: "CREATE"; runId: string; model: string }
@@ -109,16 +101,16 @@ function liveRunReducer(state: Map<string, LiveRun>, action: LiveRunAction): Map
 export function App() {
   const [view, setView] = useState<View>({ kind: "new-run" });
   const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [liveRunMap, dispatchLive] = useReducer(
-    liveRunReducer,
-    new Map<string, LiveRun>(),
-  );
+  const [liveRunMap, dispatchLive] = useReducer(liveRunReducer, new Map<string, LiveRun>());
   const [activeStreamId, setActiveStreamId] = useState<string | null>(null);
 
   // Poll run history
   useEffect(() => {
     function poll() {
-      api.runs.list().then(setRuns).catch(() => {});
+      api.runs
+        .list()
+        .then(setRuns)
+        .catch(() => {});
     }
     poll();
     const id = setInterval(poll, RUNS_POLL_INTERVAL_MS);
@@ -140,7 +132,10 @@ export function App() {
         event.type === "run.failed" ||
         event.type === "run.cancelled"
       ) {
-        api.runs.list().then(setRuns).catch(() => {});
+        api.runs
+          .list()
+          .then(setRuns)
+          .catch(() => {});
         if (event.type === "run.completed") {
           setTimeout(() => {
             setView({ kind: "detail", runId: activeStreamId });
@@ -164,7 +159,12 @@ export function App() {
 
   function handleSelectRun(id: string) {
     const liveRun = liveRunMap.get(id);
-    if (liveRun && (liveRun.status === "in-progress" || liveRun.status === "awaiting" || liveRun.status === "created")) {
+    if (
+      liveRun &&
+      (liveRun.status === "in-progress" ||
+        liveRun.status === "awaiting" ||
+        liveRun.status === "created")
+    ) {
       setView({ kind: "live", runId: id });
     } else {
       setView({ kind: "detail", runId: id });
@@ -183,11 +183,9 @@ export function App() {
   }, []);
 
   const liveRuns = Array.from(liveRunMap.values());
-  const selectedRunId =
-    view.kind === "live" || view.kind === "detail" ? view.runId : null;
+  const selectedRunId = view.kind === "live" || view.kind === "detail" ? view.runId : null;
 
-  const activeRun =
-    view.kind === "live" ? liveRunMap.get(view.runId) ?? null : null;
+  const activeRun = view.kind === "live" ? (liveRunMap.get(view.runId) ?? null) : null;
 
   return (
     <div className="flex h-full bg-zinc-950">
@@ -208,9 +206,7 @@ export function App() {
             }}
           />
         )}
-        {view.kind === "live" && activeRun && (
-          <LiveFeed run={activeRun} onControl={send} />
-        )}
+        {view.kind === "live" && activeRun && <LiveFeed run={activeRun} onControl={send} />}
         {view.kind === "live" && !activeRun && (
           <div className="flex-1 flex items-center justify-center">
             <p className="text-sm text-zinc-500 font-mono">Run not found</p>

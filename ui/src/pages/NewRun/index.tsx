@@ -38,14 +38,16 @@ export function NewRun({ onRunStarted }: NewRunProps) {
   const [startError, setStartError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.models.list().then((ms) => {
-      setModels(ms);
-      const defaultModel =
-        ms.find((m) => m.id.includes("sonnet"))?.id ?? ms[0]?.id ?? "";
-      setModel(defaultModel);
-    }).catch(() => {
-      // ignore
-    });
+    api.models
+      .list()
+      .then((ms) => {
+        setModels(ms);
+        const defaultModel = ms.find((m) => m.id.includes("sonnet"))?.id ?? ms[0]?.id ?? "";
+        setModel(defaultModel);
+      })
+      .catch(() => {
+        // ignore
+      });
   }, []);
 
   const issueConfirmed =
@@ -231,7 +233,11 @@ export function NewRun({ onRunStarted }: NewRunProps) {
                 disabled={findLoading || !findQuery.trim()}
                 className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
               >
-                {findLoading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                {findLoading ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Search size={14} />
+                )}
                 Find
               </button>
             </div>
@@ -244,8 +250,20 @@ export function NewRun({ onRunStarted }: NewRunProps) {
                   className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-1.5 text-xs text-zinc-400 focus:outline-none focus:border-amber-500/50"
                 >
                   <option value="">Any language</option>
-                  {["TypeScript","JavaScript","Python","Go","Rust","Ruby","Java","C#","C++"].map((l) => (
-                    <option key={l} value={l.toLowerCase()}>{l}</option>
+                  {[
+                    "TypeScript",
+                    "JavaScript",
+                    "Python",
+                    "Go",
+                    "Rust",
+                    "Ruby",
+                    "Java",
+                    "C#",
+                    "C++",
+                  ].map((l) => (
+                    <option key={l} value={l.toLowerCase()}>
+                      {l}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -270,9 +288,7 @@ export function NewRun({ onRunStarted }: NewRunProps) {
               </div>
             </div>
 
-            {findError && (
-              <p className="text-xs text-red-400 mb-3">{findError}</p>
-            )}
+            {findError && <p className="text-xs text-red-400 mb-3">{findError}</p>}
 
             {findResults && (
               <div className="flex flex-col gap-2">
@@ -300,9 +316,7 @@ export function NewRun({ onRunStarted }: NewRunProps) {
                       <p className="text-xs text-zinc-500 font-mono mb-1.5 truncate">{c.url}</p>
                       <p className="text-xs text-zinc-400">{c.reasons.slice(0, 2).join(" · ")}</p>
                       {c.claim.warnings.length > 0 && (
-                        <p className="text-xs text-amber-500/70 mt-1">
-                          ⚠ {c.claim.warnings[0]}
-                        </p>
+                        <p className="text-xs text-amber-500/70 mt-1">⚠ {c.claim.warnings[0]}</p>
                       )}
                     </div>
                   ))
@@ -317,9 +331,7 @@ export function NewRun({ onRunStarted }: NewRunProps) {
           <>
             <div className="border-t border-zinc-800 pt-6 mb-6">
               <div className="mb-4">
-                <label className="text-xs font-medium text-zinc-400 mb-1.5 block">
-                  Model
-                </label>
+                <label className="text-xs font-medium text-zinc-400 mb-1.5 block">Model</label>
                 <select
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
@@ -364,9 +376,30 @@ export function NewRun({ onRunStarted }: NewRunProps) {
                 <div className="mt-3 grid grid-cols-3 gap-3">
                   {(
                     [
-                      { label: "Steps", value: maxSteps, min: 1, max: 200, step: 1, onChange: setMaxSteps },
-                      { label: "Cost ($)", value: maxCost, min: 0.1, max: 50, step: 0.1, onChange: setMaxCost },
-                      { label: "Time (min)", value: maxTime, min: 1, max: 120, step: 1, onChange: setMaxTime },
+                      {
+                        label: "Steps",
+                        value: maxSteps,
+                        min: 1,
+                        max: 200,
+                        step: 1,
+                        onChange: setMaxSteps,
+                      },
+                      {
+                        label: "Cost ($)",
+                        value: maxCost,
+                        min: 0.1,
+                        max: 50,
+                        step: 0.1,
+                        onChange: setMaxCost,
+                      },
+                      {
+                        label: "Time (min)",
+                        value: maxTime,
+                        min: 1,
+                        max: 120,
+                        step: 1,
+                        onChange: setMaxTime,
+                      },
                     ] as const
                   ).map(({ label, value, min, max, step, onChange }) => (
                     <div key={label}>
@@ -386,9 +419,7 @@ export function NewRun({ onRunStarted }: NewRunProps) {
               )}
             </div>
 
-            {startError && (
-              <p className="text-sm text-red-400 mb-4">{startError}</p>
-            )}
+            {startError && <p className="text-sm text-red-400 mb-4">{startError}</p>}
 
             <button
               onClick={handleStartRun}

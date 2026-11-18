@@ -12,11 +12,7 @@ export function ReportView({ report }: ReportViewProps) {
   }, [report]);
 
   if (!report) {
-    return (
-      <p className="text-sm text-zinc-500 py-6 text-center font-mono">
-        No report available
-      </p>
-    );
+    return <p className="text-sm text-zinc-500 py-6 text-center font-mono">No report available</p>;
   }
 
   return (

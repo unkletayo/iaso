@@ -21,24 +21,16 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export function Sidebar({
-  runs,
-  liveRuns,
-  selectedRunId,
-  onSelectRun,
-  onNewRun,
-}: SidebarProps) {
+export function Sidebar({ runs, liveRuns, selectedRunId, onSelectRun, onNewRun }: SidebarProps) {
   // Merge live runs with historical runs, deduplicating by runId
   const liveIds = new Set(liveRuns.map((r) => r.runId));
   const historical = runs.filter((r) => !liveIds.has(r.runId));
 
-  const allItems: Array<
-    | { kind: "live"; run: LiveRun }
-    | { kind: "historical"; run: RunSummary }
-  > = [
-    ...liveRuns.map((r) => ({ kind: "live" as const, run: r })),
-    ...historical.map((r) => ({ kind: "historical" as const, run: r })),
-  ];
+  const allItems: Array<{ kind: "live"; run: LiveRun } | { kind: "historical"; run: RunSummary }> =
+    [
+      ...liveRuns.map((r) => ({ kind: "live" as const, run: r })),
+      ...historical.map((r) => ({ kind: "historical" as const, run: r })),
+    ];
 
   return (
     <aside className="flex flex-col w-[220px] min-w-[220px] border-r border-zinc-800 bg-zinc-900 h-full">
@@ -70,34 +62,24 @@ export function Sidebar({
         ) : (
           <ul className="py-1">
             {allItems.map((item) => {
-              const id =
-                item.kind === "live" ? item.run.runId : item.run.runId;
+              const id = item.kind === "live" ? item.run.runId : item.run.runId;
               const isSelected = selectedRunId === id;
-              const status =
-                item.kind === "live" ? item.run.status : item.run.status;
+              const status = item.kind === "live" ? item.run.status : item.run.status;
               const title =
                 item.kind === "live"
-                  ? item.run.issueTitle ?? item.run.runId
-                  : item.run.issueTitle ?? item.run.runId;
-              const model =
-                item.kind === "live" ? item.run.model : item.run.model;
-              const steps =
-                item.kind === "live" ? item.run.steps : item.run.steps;
-              const costUsd =
-                item.kind === "live" ? item.run.costUsd : item.run.costUsd;
-              const startedAt =
-                item.kind === "live"
-                  ? item.run.startedAt
-                  : item.run.startedAt;
+                  ? (item.run.issueTitle ?? item.run.runId)
+                  : (item.run.issueTitle ?? item.run.runId);
+              const model = item.kind === "live" ? item.run.model : item.run.model;
+              const steps = item.kind === "live" ? item.run.steps : item.run.steps;
+              const costUsd = item.kind === "live" ? item.run.costUsd : item.run.costUsd;
+              const startedAt = item.kind === "live" ? item.run.startedAt : item.run.startedAt;
 
               return (
                 <li key={id}>
                   <button
                     onClick={() => onSelectRun(id)}
                     className={`w-full text-left px-3 py-2.5 hover:bg-zinc-800 transition-colors border-l-2 ${
-                      isSelected
-                        ? "border-amber-500 bg-zinc-800/60"
-                        : "border-transparent"
+                      isSelected ? "border-amber-500 bg-zinc-800/60" : "border-transparent"
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
@@ -106,13 +88,9 @@ export function Sidebar({
                         {formatTime(startedAt)}
                       </span>
                     </div>
-                    <p className="text-xs text-zinc-200 truncate leading-tight mb-1">
-                      {title}
-                    </p>
+                    <p className="text-xs text-zinc-200 truncate leading-tight mb-1">{title}</p>
                     <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
-                      <span className="truncate max-w-[80px]">
-                        {model.split(":")[1] ?? model}
-                      </span>
+                      <span className="truncate max-w-[80px]">{model.split(":")[1] ?? model}</span>
                       <span>{steps} steps</span>
                       <span>{formatCost(costUsd)}</span>
                     </div>

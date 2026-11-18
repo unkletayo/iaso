@@ -77,11 +77,7 @@ function TextDelta({ step, delta }: { step: number; delta: string }) {
   );
 }
 
-function ToolCallCard({
-  part,
-}: {
-  part: Extract<ServePart, { kind: "tool_call" }>;
-}) {
+function ToolCallCard({ part }: { part: Extract<ServePart, { kind: "tool_call" }> }) {
   const [expanded, setExpanded] = useState(false);
   const inputStr = JSON.stringify(part.input, null, 2);
   const preview = inputStr.slice(0, TOOL_INPUT_PREVIEW_LENGTH);
@@ -117,20 +113,14 @@ function ToolCallCard({
   );
 }
 
-function ToolResultCard({
-  part,
-}: {
-  part: Extract<ServePart, { kind: "tool_result" }>;
-}) {
+function ToolResultCard({ part }: { part: Extract<ServePart, { kind: "tool_result" }> }) {
   const [expanded, setExpanded] = useState(false);
   const preview = part.output.slice(0, TOOL_INPUT_PREVIEW_LENGTH);
 
   return (
     <div
       className={`border rounded overflow-hidden ${
-        part.error
-          ? "border-red-900/50 bg-red-950/20"
-          : "border-zinc-800/50 bg-zinc-900/30"
+        part.error ? "border-red-900/50 bg-red-950/20" : "border-zinc-800/50 bg-zinc-900/30"
       }`}
     >
       <button
@@ -143,9 +133,7 @@ function ToolResultCard({
           <ChevronRight size={11} className="text-zinc-600 shrink-0" />
         )}
         <span className="text-[10px] text-zinc-600 font-mono">result</span>
-        {part.error && (
-          <span className="text-[10px] text-red-400 font-mono">error</span>
-        )}
+        {part.error && <span className="text-[10px] text-red-400 font-mono">error</span>}
         {!expanded && (
           <span className="text-xs text-zinc-500 font-mono truncate">
             {preview}

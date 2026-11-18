@@ -77,9 +77,7 @@ export function LiveFeed({ run, onControl }: LiveFeedProps) {
       {/* Header bar */}
       <div className="flex items-center gap-4 px-5 py-2.5 border-b border-zinc-800 bg-zinc-900/80 shrink-0">
         <span className="text-xs font-mono text-zinc-500 truncate max-w-[180px]">{run.runId}</span>
-        <span className="text-xs text-zinc-400">
-          {run.model.split(":")[1] ?? run.model}
-        </span>
+        <span className="text-xs text-zinc-400">{run.model.split(":")[1] ?? run.model}</span>
         <span className="text-xs font-mono text-zinc-400">{formatElapsed(elapsed)}</span>
         <span className="text-xs font-mono text-zinc-500">step {run.steps}</span>
         <span className="text-xs font-mono text-zinc-500">{formatCost(run.costUsd)}</span>
@@ -95,11 +93,7 @@ export function LiveFeed({ run, onControl }: LiveFeedProps) {
 
       {/* Approval banner */}
       {run.awaiting && (
-        <ApprovalBanner
-          awaiting={run.awaiting}
-          onApprove={handleApprove}
-          onReject={handleReject}
-        />
+        <ApprovalBanner awaiting={run.awaiting} onApprove={handleApprove} onReject={handleReject} />
       )}
 
       {/* Feed */}

@@ -128,11 +128,7 @@ export function DiffView({ diff }: DiffViewProps) {
 
 function DiffLineRow({ line }: { line: DiffLine }) {
   if (line.kind === "hunk") {
-    return (
-      <div className="diff-line-hunk px-3 py-0.5 select-none">
-        {line.text}
-      </div>
-    );
+    return <div className="diff-line-hunk px-3 py-0.5 select-none">{line.text}</div>;
   }
   if (line.kind === "add") {
     return (
