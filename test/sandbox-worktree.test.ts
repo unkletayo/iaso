@@ -27,7 +27,7 @@ async function createRepo(files: Record<string, string> = {}): Promise<string> {
     await writeFile(abs, content);
   }
   await git("add -A", dir);
-  await git('commit --no-gpg-sign -m init', dir);
+  await git("commit --no-gpg-sign -m init", dir);
   return dir;
 }
 

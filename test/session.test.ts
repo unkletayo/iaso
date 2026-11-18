@@ -128,10 +128,7 @@ describe("approval flow", () => {
   });
 
   it("ask policy emits approval_requested and blocks until approved", async () => {
-    const { options } = setup(
-      [submit],
-      { approvalPolicy: { default: "ask", rules: [] } },
-    );
+    const { options } = setup([submit], { approvalPolicy: { default: "ask", rules: [] } });
     const session = createSession(options);
     const events: SessionEvent[] = [];
     const startPromise = session.start();
@@ -207,10 +204,7 @@ describe("approval flow", () => {
 
 describe("cancel", () => {
   it("cancel during ask policy resolves all pending approvals as deny", async () => {
-    const { options } = setup(
-      [submit],
-      { approvalPolicy: { default: "ask", rules: [] } },
-    );
+    const { options } = setup([submit], { approvalPolicy: { default: "ask", rules: [] } });
     const session = createSession(options);
     const events: SessionEvent[] = [];
     const startPromise = session.start();
@@ -256,15 +250,12 @@ describe("policy matching", () => {
   });
 
   it("rule overrides default: deny default with one auto rule allows that tool", async () => {
-    const { options } = setup(
-      [submit],
-      {
-        approvalPolicy: {
-          default: "deny",
-          rules: [{ tool: "submit", action: "auto" }],
-        },
+    const { options } = setup([submit], {
+      approvalPolicy: {
+        default: "deny",
+        rules: [{ tool: "submit", action: "auto" }],
       },
-    );
+    });
     const session = createSession(options);
     const events = await collectEvents(session);
 
@@ -276,18 +267,15 @@ describe("policy matching", () => {
   });
 
   it("first matching rule wins", async () => {
-    const { options } = setup(
-      [submit],
-      {
-        approvalPolicy: {
-          default: "deny",
-          rules: [
-            { tool: "submit", action: "auto" },
-            { tool: "submit", action: "deny" },
-          ],
-        },
+    const { options } = setup([submit], {
+      approvalPolicy: {
+        default: "deny",
+        rules: [
+          { tool: "submit", action: "auto" },
+          { tool: "submit", action: "deny" },
+        ],
       },
-    );
+    });
     const session = createSession(options);
     const events = await collectEvents(session);
 

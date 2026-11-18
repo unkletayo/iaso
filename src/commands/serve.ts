@@ -12,12 +12,7 @@ import {
   describeConventions,
   readConventions,
 } from "../oss/conventions.js";
-import {
-  IssueClaimedError,
-  checkIssueClaim,
-  claimMessage,
-  describeClaim,
-} from "../oss/claim.js";
+import { IssueClaimedError, checkIssueClaim, claimMessage, describeClaim } from "../oss/claim.js";
 import { createProvider } from "../providers/registry.js";
 import type { ModelProvider } from "../providers/types.js";
 import { DockerSandbox } from "../sandbox/docker.js";
@@ -59,17 +54,17 @@ export interface AwaitRequest {
 }
 
 export type ServeEvent =
-  | { type: "run.created";     run_id: string; status: "created" }
+  | { type: "run.created"; run_id: string; status: "created" }
   | { type: "run.in-progress"; run_id: string; status: "in-progress" }
-  | { type: "message.part";    run_id: string; part: ServePart }
-  | { type: "run.awaiting";    run_id: string; status: "awaiting"; await: AwaitRequest }
-  | { type: "run.completed";   run_id: string; status: "completed"; result: PipelineResult }
-  | { type: "run.failed";      run_id: string; status: "failed"; message: string }
-  | { type: "run.cancelled";   run_id: string; status: "cancelled" };
+  | { type: "message.part"; run_id: string; part: ServePart }
+  | { type: "run.awaiting"; run_id: string; status: "awaiting"; await: AwaitRequest }
+  | { type: "run.completed"; run_id: string; status: "completed"; result: PipelineResult }
+  | { type: "run.failed"; run_id: string; status: "failed"; message: string }
+  | { type: "run.cancelled"; run_id: string; status: "cancelled" };
 
 export type ServeControl =
   | { kind: "approve"; id: string }
-  | { kind: "reject";  id: string; reason?: string }
+  | { kind: "reject"; id: string; reason?: string }
   | { kind: "cancel" };
 
 // ── Deps ─────────────────────────────────────────────────────────────────────
@@ -118,27 +113,46 @@ export function translateEvent(
       return null;
     case "text_delta":
       return {
-        type: "message.part", run_id: runId,
+        type: "message.part",
+        run_id: runId,
         part: { kind: "text", step: event.step, delta: event.delta },
       };
     case "tool_call":
       return {
-        type: "message.part", run_id: runId,
-        part: { kind: "tool_call", step: event.step, id: event.id, name: event.name, input: event.input },
+        type: "message.part",
+        run_id: runId,
+        part: {
+          kind: "tool_call",
+          step: event.step,
+          id: event.id,
+          name: event.name,
+          input: event.input,
+        },
       };
     case "tool_result":
       return {
-        type: "message.part", run_id: runId,
-        part: { kind: "tool_result", step: event.step, id: event.id, name: event.name, output: event.output, error: event.error },
+        type: "message.part",
+        run_id: runId,
+        part: {
+          kind: "tool_result",
+          step: event.step,
+          id: event.id,
+          name: event.name,
+          output: event.output,
+          error: event.error,
+        },
       };
     case "approval_requested":
       return {
-        type: "run.awaiting", run_id: runId, status: "awaiting",
+        type: "run.awaiting",
+        run_id: runId,
+        status: "awaiting",
         await: { id: event.id, name: event.name, input: event.input },
       };
     case "context_event":
       return {
-        type: "message.part", run_id: runId,
+        type: "message.part",
+        run_id: runId,
         part: { kind: "context", step: event.step, type: event.type },
       };
     case "finished": {
@@ -150,7 +164,9 @@ export function translateEvent(
         return { type: "run.cancelled", run_id: runId, status: "cancelled" };
       }
       return {
-        type: "run.failed", run_id: runId, status: "failed",
+        type: "run.failed",
+        run_id: runId,
+        status: "failed",
         message: result.message ?? result.status,
       };
     }
@@ -159,10 +175,7 @@ export function translateEvent(
 
 // ── Stdin control reader ──────────────────────────────────────────────────────
 
-export function startControlReader(
-  stdin: NodeJS.ReadableStream,
-  session: Session,
-): () => void {
+export function startControlReader(stdin: NodeJS.ReadableStream, session: Session): () => void {
   const rl = createInterface({ input: stdin, crlfDelay: Infinity });
   rl.on("line", (line) => {
     const trimmed = line.trim();
@@ -276,7 +289,9 @@ async function serveWithSource(
         elapsedMs: Date.now() - started,
         result: pipelineResult,
       });
-      deps.log(`${pipelineResult.status}: ${String(pipelineResult.steps)} steps, $${pipelineResult.costUsd.toFixed(4)}. Report: ${join(runDir, "report.md")}`);
+      deps.log(
+        `${pipelineResult.status}: ${String(pipelineResult.steps)} steps, $${pipelineResult.costUsd.toFixed(4)}. Report: ${join(runDir, "report.md")}`,
+      );
     }
   } finally {
     await sandbox.destroy();
@@ -342,16 +357,32 @@ export function registerServe(program: Command, deps: () => ServeDeps = defaultS
   program
     .command("serve")
     .description("Run a session and stream events over stdio (JSON-lines)")
-    .requiredOption("--stdio", "use stdin/stdout transport (required; reserved for future transports)")
+    .requiredOption(
+      "--stdio",
+      "use stdin/stdout transport (required; reserved for future transports)",
+    )
     .option("--repo <path>", "repository to fix; needs --issue")
     .option("--issue <file>", "file with the bug report; needs --repo")
     .option("--github <url>", "GitHub issue URL")
     .option("--model <id>", "model for reproduce, fix, verify", DEFAULT_MODEL)
     .option("--plan-model <id>", "model for the plan phase (default: --model)")
-    .option("--compact-model <id>", "model that summarises old steps (default: cheapest of provider)")
+    .option(
+      "--compact-model <id>",
+      "model that summarises old steps (default: cheapest of provider)",
+    )
     .option("--max-steps <n>", "step limit", positive("--max-steps"), BUDGET_DEFAULTS.maxSteps)
-    .option("--max-cost <usd>", "cost limit in dollars", positive("--max-cost"), BUDGET_DEFAULTS.maxCostUsd)
-    .option("--max-time <min>", "time limit in minutes", positive("--max-time"), BUDGET_DEFAULTS.maxTimeMinutes)
+    .option(
+      "--max-cost <usd>",
+      "cost limit in dollars",
+      positive("--max-cost"),
+      BUDGET_DEFAULTS.maxCostUsd,
+    )
+    .option(
+      "--max-time <min>",
+      "time limit in minutes",
+      positive("--max-time"),
+      BUDGET_DEFAULTS.maxTimeMinutes,
+    )
     .option("--runs <dir>", "where run folders go", "runs")
     .option("--config <file>", "path to .iaso.json")
     .option("--no-plan", "skip the plan phase")

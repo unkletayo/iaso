@@ -87,10 +87,7 @@ class PushQueue<T> implements AsyncIterable<T> {
   }
 }
 
-function resolveAction(
-  policy: ApprovalPolicy,
-  toolName: string,
-): "auto" | "ask" | "deny" {
+function resolveAction(policy: ApprovalPolicy, toolName: string): "auto" | "ask" | "deny" {
   for (const rule of policy.rules) {
     if (rule.tool === toolName) return rule.action;
   }
@@ -114,7 +111,13 @@ export function createSession(opts: SessionOptions): Session {
       queue.push({ kind: "tool_call", step, id: call.id, name: call.name, input: call.input });
       const action = resolveAction(opts.approvalPolicy, call.name);
       if (action !== "ask") return action;
-      queue.push({ kind: "approval_requested", step, id: call.id, name: call.name, input: call.input });
+      queue.push({
+        kind: "approval_requested",
+        step,
+        id: call.id,
+        name: call.name,
+        input: call.input,
+      });
       return new Promise<"auto" | "deny">((resolve) => {
         pendingApprovals.set(call.id, resolve);
       });

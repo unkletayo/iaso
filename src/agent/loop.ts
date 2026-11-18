@@ -42,13 +42,17 @@ import {
   loopNudge,
 } from "./prompts.js";
 
-export type RunStatus = "submitted" | "budget_exceeded" | "no_tool_use" | "stuck" | "cancelled" | "error";
+export type RunStatus =
+  "submitted" | "budget_exceeded" | "no_tool_use" | "stuck" | "cancelled" | "error";
 
 export interface LoopHooks {
   onStepStarted?: (step: number) => void;
   onText?: (step: number, text: string) => void;
   /** Called before tool execution. Return "auto" to run, "deny" to block. */
-  onToolApproval?: (step: number, call: { id: string; name: string; input: unknown }) => Promise<"auto" | "deny">;
+  onToolApproval?: (
+    step: number,
+    call: { id: string; name: string; input: unknown },
+  ) => Promise<"auto" | "deny">;
   onToolResult?: (step: number, id: string, name: string, output: string, error: boolean) => void;
   onContextEvent?: (step: number, type: "compacted" | "loop_detected" | "stuck") => void;
 }

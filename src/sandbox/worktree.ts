@@ -1,5 +1,11 @@
 import { spawn } from "node:child_process";
-import { rm, mkdir, writeFile as fsWriteFile, readFile as fsReadFile, mkdtemp } from "node:fs/promises";
+import {
+  rm,
+  mkdir,
+  writeFile as fsWriteFile,
+  readFile as fsReadFile,
+  mkdtemp,
+} from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { tmpdir } from "node:os";
 import { REPO_DIR } from "./images.js";
@@ -45,9 +51,7 @@ export class WorktreeSandbox implements Sandbox {
         this.opts.repoPath,
       );
       if (result.exitCode !== 0) {
-        throw new Error(
-          `git worktree add failed: ${result.stderr.trim() || result.stdout.trim()}`,
-        );
+        throw new Error(`git worktree add failed: ${result.stderr.trim() || result.stdout.trim()}`);
       }
     } catch (err) {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
@@ -61,8 +65,7 @@ export class WorktreeSandbox implements Sandbox {
   async exec(cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {
     const wt = this.requireWorktree();
     const mapped = cmd.replaceAll(REPO_DIR, wt);
-    const cwd =
-      opts.cwd !== undefined ? repoToWt(opts.cwd, wt) : wt;
+    const cwd = opts.cwd !== undefined ? repoToWt(opts.cwd, wt) : wt;
     return runInDir(mapped, cwd, opts.timeoutSec ?? DEFAULT_TIMEOUT_SEC);
   }
 
@@ -84,10 +87,7 @@ export class WorktreeSandbox implements Sandbox {
   async diff(): Promise<string> {
     const wt = this.requireWorktree();
     const base = this.baseCommit!;
-    const result = await runInDir(
-      `git add -A && git diff --cached --binary ${base}`,
-      wt,
-    );
+    const result = await runInDir(`git add -A && git diff --cached --binary ${base}`, wt);
     if (result.exitCode !== 0) throw new Error(`git diff failed: ${result.stderr.trim()}`);
     return result.stdout;
   }
@@ -102,10 +102,7 @@ export class WorktreeSandbox implements Sandbox {
     const wt = this.worktreePath;
     if (wt !== undefined) {
       this.worktreePath = undefined;
-      const result = await runInDir(
-        `git worktree remove --force ${sq(wt)}`,
-        this.opts.repoPath,
-      );
+      const result = await runInDir(`git worktree remove --force ${sq(wt)}`, this.opts.repoPath);
       if (result.exitCode !== 0) {
         // Fallback: rm the directory directly if git worktree remove failed.
         await rm(wt, { recursive: true, force: true }).catch(() => undefined);

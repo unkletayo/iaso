@@ -20,7 +20,11 @@ import { BUDGET_DEFAULTS } from "../src/config.js";
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const submit = mockToolCall("s", "submit", {
-  summary: "done", prTitle: "Fix it", prSummary: "Fixes it.", testsAdded: [], confidence: "high",
+  summary: "done",
+  prTitle: "Fix it",
+  prSummary: "Fixes it.",
+  testsAdded: [],
+  confidence: "high",
 });
 
 type AwaitHandler = (a: AwaitRequest) => ServeControl;
@@ -47,7 +51,9 @@ function setup(
             const ctrl = onAwaiting(event.await);
             stdinThrough.push(`${JSON.stringify(ctrl)}\n`);
           }
-        } catch { /* skip malformed */ }
+        } catch {
+          /* skip malformed */
+        }
       }
       cb();
     },
@@ -93,48 +99,108 @@ describe("translateEvent", () => {
 
   it("maps first step_started to run.in-progress, subsequent to null", () => {
     const seen = { value: false };
-    expect(translateEvent(runId, { kind: "step_started", step: 1 }, seen))
-      .toMatchObject({ type: "run.in-progress" });
+    expect(translateEvent(runId, { kind: "step_started", step: 1 }, seen)).toMatchObject({
+      type: "run.in-progress",
+    });
     expect(translateEvent(runId, { kind: "step_started", step: 2 }, seen)).toBeNull();
   });
 
   it("maps text_delta to message.part kind:text", () => {
     const seen = { value: false };
-    expect(translateEvent(runId, { kind: "text_delta", step: 1, delta: "hi" }, seen))
-      .toMatchObject({ type: "message.part", part: { kind: "text", delta: "hi" } });
+    expect(translateEvent(runId, { kind: "text_delta", step: 1, delta: "hi" }, seen)).toMatchObject(
+      { type: "message.part", part: { kind: "text", delta: "hi" } },
+    );
   });
 
   it("maps tool_call to message.part kind:tool_call", () => {
     const seen = { value: false };
-    expect(translateEvent(runId, { kind: "tool_call", step: 1, id: "x", name: "bash", input: {} }, seen))
-      .toMatchObject({ type: "message.part", part: { kind: "tool_call", name: "bash" } });
+    expect(
+      translateEvent(runId, { kind: "tool_call", step: 1, id: "x", name: "bash", input: {} }, seen),
+    ).toMatchObject({ type: "message.part", part: { kind: "tool_call", name: "bash" } });
   });
 
   it("maps approval_requested to run.awaiting", () => {
     const seen = { value: false };
-    expect(translateEvent(runId, { kind: "approval_requested", step: 1, id: "x", name: "bash", input: {} }, seen))
-      .toMatchObject({ type: "run.awaiting", status: "awaiting", await: { id: "x", name: "bash" } });
+    expect(
+      translateEvent(
+        runId,
+        { kind: "approval_requested", step: 1, id: "x", name: "bash", input: {} },
+        seen,
+      ),
+    ).toMatchObject({ type: "run.awaiting", status: "awaiting", await: { id: "x", name: "bash" } });
   });
 
   it("maps finished:submitted to run.completed", () => {
     const seen = { value: false };
-    const result = { status: "submitted" as const, planCostUsd: 0, planSteps: 0, costUsd: 0, steps: 1, diff: "" };
-    expect(translateEvent(runId, { kind: "finished", result, verification: { submitted: true, phase: "report" }, network: "enabled" }, seen))
-      .toMatchObject({ type: "run.completed" });
+    const result = {
+      status: "submitted" as const,
+      planCostUsd: 0,
+      planSteps: 0,
+      costUsd: 0,
+      steps: 1,
+      diff: "",
+    };
+    expect(
+      translateEvent(
+        runId,
+        {
+          kind: "finished",
+          result,
+          verification: { submitted: true, phase: "report" },
+          network: "enabled",
+        },
+        seen,
+      ),
+    ).toMatchObject({ type: "run.completed" });
   });
 
   it("maps finished:cancelled to run.cancelled", () => {
     const seen = { value: false };
-    const result = { status: "cancelled" as const, planCostUsd: 0, planSteps: 0, costUsd: 0, steps: 1, diff: "" };
-    expect(translateEvent(runId, { kind: "finished", result, verification: { submitted: false, phase: "fix" }, network: "enabled" }, seen))
-      .toMatchObject({ type: "run.cancelled" });
+    const result = {
+      status: "cancelled" as const,
+      planCostUsd: 0,
+      planSteps: 0,
+      costUsd: 0,
+      steps: 1,
+      diff: "",
+    };
+    expect(
+      translateEvent(
+        runId,
+        {
+          kind: "finished",
+          result,
+          verification: { submitted: false, phase: "fix" },
+          network: "enabled",
+        },
+        seen,
+      ),
+    ).toMatchObject({ type: "run.cancelled" });
   });
 
   it("maps finished:budget_exceeded to run.failed with message", () => {
     const seen = { value: false };
-    const result = { status: "budget_exceeded" as const, message: "over budget", planCostUsd: 0, planSteps: 0, costUsd: 0, steps: 1, diff: "" };
-    expect(translateEvent(runId, { kind: "finished", result, verification: { submitted: false, phase: "fix" }, network: "enabled" }, seen))
-      .toMatchObject({ type: "run.failed", message: "over budget" });
+    const result = {
+      status: "budget_exceeded" as const,
+      message: "over budget",
+      planCostUsd: 0,
+      planSteps: 0,
+      costUsd: 0,
+      steps: 1,
+      diff: "",
+    };
+    expect(
+      translateEvent(
+        runId,
+        {
+          kind: "finished",
+          result,
+          verification: { submitted: false, phase: "fix" },
+          network: "enabled",
+        },
+        seen,
+      ),
+    ).toMatchObject({ type: "run.failed", message: "over budget" });
   });
 });
 
@@ -163,10 +229,11 @@ describe("executeServeCommand event sequence", () => {
   it("includes text_delta part when model responds with text", async () => {
     const { deps, opts, events } = setup([mockText("thinking..."), submit]);
     await executeServeCommand(opts, deps);
-    type TextPart = Extract<ServeEvent, { type: "message.part" }> & { part: Extract<ServePart, { kind: "text" }> };
+    type TextPart = Extract<ServeEvent, { type: "message.part" }> & {
+      part: Extract<ServePart, { kind: "text" }>;
+    };
     const textParts = events.filter(
-      (e): e is TextPart =>
-        e.type === "message.part" && e.part.kind === "text",
+      (e): e is TextPart => e.type === "message.part" && e.part.kind === "text",
     );
     expect(textParts.length).toBeGreaterThan(0);
     expect(textParts[0]!.part.delta).toBe("thinking...");
@@ -180,10 +247,7 @@ describe("executeServeCommand event sequence", () => {
   });
 
   it("emits run.cancelled when cancel is sent in response to awaiting", async () => {
-    const { deps, opts, events } = setup(
-      [submit],
-      (a) => ({ kind: "cancel" }),
-    );
+    const { deps, opts, events } = setup([submit], (a) => ({ kind: "cancel" }));
     await executeServeCommand(opts, deps);
     const last = events[events.length - 1]!;
     expect(last.type).toBe("run.cancelled");
@@ -191,17 +255,19 @@ describe("executeServeCommand event sequence", () => {
 
   it("rejected tool call produces an error tool_result, then run.failed after script exhausted", async () => {
     let calls = 0;
-    const { deps, opts, events } = setup(
-      [submit, submit, submit],
-      (a) => { calls++; return { kind: "reject", id: a.id }; },
-    );
+    const { deps, opts, events } = setup([submit, submit, submit], (a) => {
+      calls++;
+      return { kind: "reject", id: a.id };
+    });
     await executeServeCommand(opts, deps);
     // All awaiting events should have a matching tool_result with error
     const awaitingIds = events
       .filter((e): e is Extract<ServeEvent, { type: "run.awaiting" }> => e.type === "run.awaiting")
       .map((e) => e.await.id);
     for (const id of awaitingIds) {
-      type ToolResultPart = Extract<ServeEvent, { type: "message.part" }> & { part: Extract<ServePart, { kind: "tool_result" }> };
+      type ToolResultPart = Extract<ServeEvent, { type: "message.part" }> & {
+        part: Extract<ServePart, { kind: "tool_result" }>;
+      };
       const result = events.find(
         (e): e is ToolResultPart =>
           e.type === "message.part" && e.part.kind === "tool_result" && e.part.id === id,
