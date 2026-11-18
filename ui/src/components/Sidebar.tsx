@@ -23,8 +23,8 @@ function formatTime(ts: number): string {
 }
 
 function formatElapsed(ms: number): string {
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  return `${Math.floor(ms / 60_000)}m`;
+  if (ms < 60_000) return `${String(Math.round(ms / 1000))}s`;
+  return `${String(Math.floor(ms / 60_000))}m`;
 }
 
 export function Sidebar({
@@ -99,7 +99,9 @@ export function Sidebar({
               return (
                 <li key={id}>
                   <button
-                    onClick={() => onSelectRun(id)}
+                    onClick={() => {
+                      onSelectRun(id);
+                    }}
                     className={`w-full text-left px-3 py-2.5 hover:bg-zinc-800 transition-colors border-l-2 ${
                       isSelected ? "border-amber-500 bg-zinc-800/60" : "border-transparent"
                     }`}

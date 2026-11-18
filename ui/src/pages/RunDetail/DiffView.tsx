@@ -102,7 +102,9 @@ export function DiffView({ diff }: DiffViewProps) {
             {/* File header — sticky */}
             <div className="sticky top-0 z-10 flex items-center gap-3 px-3 py-2 bg-zinc-900 border-b border-zinc-800">
               <button
-                onClick={() => toggleFile(file.header)}
+                onClick={() => {
+                  toggleFile(file.header);
+                }}
                 className="text-xs text-zinc-300 font-mono flex-1 text-left truncate hover:text-zinc-100"
               >
                 {file.header}

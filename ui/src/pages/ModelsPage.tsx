@@ -13,7 +13,9 @@ export function ModelsPage() {
         setModels(ms);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        setLoading(false);
+      });
   }, []);
 
   const groups = groupByProvider(models);
@@ -51,7 +53,7 @@ export function ModelsPage() {
                         <span title="Context window">
                           {m.contextWindow >= 1_000_000
                             ? `${(m.contextWindow / 1_000_000).toFixed(1)}M ctx`
-                            : `${Math.round(m.contextWindow / 1_000)}k ctx`}
+                            : `${String(Math.round(m.contextWindow / 1_000))}k ctx`}
                         </span>
                       </div>
                     </div>
@@ -67,10 +69,14 @@ export function ModelsPage() {
 }
 
 function groupByProvider(models: ModelEntry[]): Record<string, ModelEntry[]> {
-  const groups: Record<string, ModelEntry[]> = {};
+  const groups: Partial<Record<string, ModelEntry[]>> = {};
   for (const m of models) {
-    if (!groups[m.provider]) groups[m.provider] = [];
-    groups[m.provider].push(m);
+    const existing = groups[m.provider];
+    if (existing) {
+      existing.push(m);
+    } else {
+      groups[m.provider] = [m];
+    }
   }
-  return groups;
+  return groups as Record<string, ModelEntry[]>;
 }

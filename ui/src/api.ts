@@ -13,7 +13,7 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
-    throw new Error(`${res.status}: ${text}`);
+    throw new Error(`${String(res.status)}: ${text}`);
   }
   return res.json() as Promise<T>;
 }

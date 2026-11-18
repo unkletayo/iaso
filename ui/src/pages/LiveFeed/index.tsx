@@ -8,17 +8,20 @@ function mergeTextEvents(events: ServeEvent[]): ServeEvent[] {
   const result: ServeEvent[] = [];
   for (const event of events) {
     if (event.type === "message.part" && event.part.kind === "text") {
-      const last = result[result.length - 1];
-      if (
-        last?.type === "message.part" &&
-        last.part.kind === "text" &&
-        last.part.step === event.part.step
-      ) {
-        result[result.length - 1] = {
-          ...last,
-          part: { ...last.part, delta: last.part.delta + event.part.delta },
-        };
-        continue;
+      const lastIdx = result.length - 1;
+      if (lastIdx >= 0) {
+        const last = result[lastIdx];
+        if (
+          last.type === "message.part" &&
+          last.part.kind === "text" &&
+          last.part.step === event.part.step
+        ) {
+          result[lastIdx] = {
+            ...last,
+            part: { ...last.part, delta: last.part.delta + event.part.delta },
+          };
+          continue;
+        }
       }
     }
     result.push(event);
@@ -32,8 +35,8 @@ interface LiveFeedProps {
 }
 
 function formatElapsed(ms: number): string {
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+  if (ms < 60_000) return `${String(Math.round(ms / 1000))}s`;
+  return `${String(Math.floor(ms / 60_000))}m ${String(Math.round((ms % 60_000) / 1000))}s`;
 }
 
 function formatCost(usd: number): string {
@@ -49,8 +52,12 @@ export function LiveFeed({ run, onControl }: LiveFeedProps) {
   // Live elapsed timer
   useEffect(() => {
     if (run.status !== "in-progress" && run.status !== "awaiting") return;
-    const id = setInterval(() => setElapsed(Date.now() - run.startedAt), 1000);
-    return () => clearInterval(id);
+    const id = setInterval(() => {
+      setElapsed(Date.now() - run.startedAt);
+    }, 1000);
+    return () => {
+      clearInterval(id);
+    };
   }, [run.status, run.startedAt]);
 
   // Auto-scroll
@@ -91,7 +98,9 @@ export function LiveFeed({ run, onControl }: LiveFeedProps) {
       if (e.key === "Escape") handleCancel();
     }
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
   }, [handleApprove, handleReject, handleCancel]);
 
   return (

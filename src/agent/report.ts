@@ -112,7 +112,7 @@ export function runInfoOf(input: ReportInput): RunInfo {
     assumptions: sub?.assumptions ?? [],
     testsAdded: sub?.testsAdded ?? [],
     testsRun: input.result.fix?.state.testsRun ?? [],
-    ...(input.result.fix?.state.failedApproaches?.length
+    ...(input.result.fix?.state.failedApproaches.length
       ? { failedApproaches: input.result.fix.state.failedApproaches }
       : {}),
     patchBytes: Buffer.byteLength(input.result.diff),

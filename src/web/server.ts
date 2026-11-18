@@ -1,4 +1,4 @@
-import { createReadStream, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,7 +75,7 @@ export async function createWebServer(opts: WebServerOptions) {
 
   fastify.get("/api/runs", async () => {
     const runsRoot = resolve(opts.runsDir);
-    let entries: string[] = [];
+    let entries: string[];
     try {
       entries = await readdir(runsRoot);
     } catch {
@@ -225,11 +225,10 @@ export async function createWebServer(opts: WebServerOptions) {
 
     // We need a runId — read the first event from the child
     const runId = await new Promise<string>((resolve, reject) => {
-      const rl = createInterface({ input: child.stdout! });
-      const timer = setTimeout(
-        () => reject(new Error("Timed out waiting for run.created")),
-        30_000,
-      );
+      const rl = createInterface({ input: child.stdout });
+      const timer = setTimeout(() => {
+        reject(new Error("Timed out waiting for run.created"));
+      }, 30_000);
       rl.once("line", (line) => {
         clearTimeout(timer);
         try {
@@ -257,12 +256,12 @@ export async function createWebServer(opts: WebServerOptions) {
       events: [],
       status: "created",
       clients: new Set(),
-      stdin: child.stdin!,
+      stdin: child.stdin,
     };
     activeRuns.set(runId, activeRun);
 
     // Stream remaining events into the registry and fan out to WebSocket clients
-    const rl2 = createInterface({ input: child.stdout! });
+    const rl2 = createInterface({ input: child.stdout });
     rl2.on("line", (line) => {
       const trimmed = line.trim();
       if (!trimmed) return;
@@ -285,7 +284,9 @@ export async function createWebServer(opts: WebServerOptions) {
     });
 
     child.on("close", () => {
-      activeRun.clients.forEach((ws) => ws.close());
+      activeRun.clients.forEach((ws) => {
+        ws.close();
+      });
       activeRuns.delete(runId);
     });
 
@@ -294,7 +295,7 @@ export async function createWebServer(opts: WebServerOptions) {
 
   // ── GET /api/models ───────────────────────────────────────────────────────
 
-  fastify.get("/api/models", async () => {
+  fastify.get("/api/models", () => {
     const catalogue = loadCatalogue();
     return catalogue.models.map((m) => ({
       id: m.id,
@@ -370,7 +371,8 @@ export async function createWebServer(opts: WebServerOptions) {
       // Forward control messages from browser to child stdin
       socket.on("message", (data) => {
         try {
-          const ctrl = JSON.parse(data.toString());
+          if (!Buffer.isBuffer(data)) return;
+          const ctrl: unknown = JSON.parse(data.toString("utf8"));
           run.stdin.write(`${JSON.stringify(ctrl)}\n`);
         } catch {
           // ignore malformed

@@ -20,6 +20,6 @@ export function registerWeb(program: Command): void {
         runsDir: opts.runs,
       });
       await server.listen({ port, host: opts.host });
-      console.log(`Iaso UI: http://${opts.host}:${port}`);
+      console.log(`Iaso UI: http://${opts.host}:${String(port)}`);
     });
 }

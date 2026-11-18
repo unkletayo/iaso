@@ -57,14 +57,11 @@ function PartCard({ part }: { part: ServePart }) {
   if (part.kind === "tool_result") {
     return <ToolResultCard part={part} />;
   }
-  if (part.kind === "context") {
-    return (
-      <div className="text-[10px] text-zinc-600 font-mono px-1">
-        — {part.type.replace(/_/g, " ")} —
-      </div>
-    );
-  }
-  return null;
+  return (
+    <div className="text-[10px] text-zinc-600 font-mono px-1">
+      — {part.type.replace(/_/g, " ")} —
+    </div>
+  );
 }
 
 // Text accumulates across consecutive text_delta events by step
@@ -85,7 +82,9 @@ function ToolCallCard({ part }: { part: Extract<ServePart, { kind: "tool_call" }
   return (
     <div className="border border-zinc-800 rounded bg-zinc-900/60 overflow-hidden">
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          setExpanded(!expanded);
+        }}
         className="flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-zinc-800/40 transition-colors"
       >
         {expanded ? (
@@ -124,7 +123,9 @@ function ToolResultCard({ part }: { part: Extract<ServePart, { kind: "tool_resul
       }`}
     >
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          setExpanded(!expanded);
+        }}
         className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-zinc-800/30 transition-colors"
       >
         {expanded ? (

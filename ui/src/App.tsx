@@ -38,68 +38,62 @@ function liveRunReducer(state: Map<string, LiveRun>, action: LiveRunAction): Map
     return next;
   }
 
-  if (action.type === "EVENT") {
-    const run = state.get(action.runId);
-    if (!run) return state;
-    const next = new Map(state);
-    const event = action.event;
+  // action.type === "EVENT"
+  const run = state.get(action.runId);
+  if (!run) return state;
+  const next = new Map(state);
+  const event = action.event;
 
-    let status: RunStatus = run.status;
-    let awaiting: AwaitRequest | null = run.awaiting;
-    let steps = run.steps;
-    let costUsd = run.costUsd;
-    let issueTitle = run.issueTitle;
+  let status: RunStatus = run.status;
+  let awaiting: AwaitRequest | null = run.awaiting;
+  let steps = run.steps;
+  let costUsd = run.costUsd;
+  const issueTitle = run.issueTitle;
 
-    if (event.type === "run.in-progress") status = "in-progress";
-    if (event.type === "run.awaiting") {
-      status = "awaiting";
-      awaiting = event.await;
-    }
-    if (event.type === "run.completed") {
-      status = "submitted";
-      awaiting = null;
-      steps = event.result.steps;
-      costUsd = event.result.costUsd;
-    }
-    if (event.type === "run.failed") {
-      status = "failed";
-      awaiting = null;
-    }
-    if (event.type === "run.cancelled") {
-      status = "cancelled";
-      awaiting = null;
-    }
-    if (event.type === "message.part" && event.part.kind === "tool_result") {
-      steps = event.part.step;
-      costUsd = steps * COST_PER_STEP_ESTIMATE;
-    }
-    // Clear awaiting when we get a tool result for the awaited call
-    if (
-      event.type === "message.part" &&
-      event.part.kind === "tool_result" &&
-      awaiting?.id === event.part.id
-    ) {
-      awaiting = null;
-      if (status === "awaiting") status = "in-progress";
-    }
-
-    next.set(action.runId, {
-      ...run,
-      status,
-      awaiting,
-      steps,
-      costUsd,
-      issueTitle,
-      elapsedMs: Date.now() - run.startedAt,
-      events:
-        event.type === "message.part" || event.type === "run.in-progress"
-          ? [...run.events, event]
-          : [...run.events, event],
-    });
-    return next;
+  if (event.type === "run.in-progress") status = "in-progress";
+  if (event.type === "run.awaiting") {
+    status = "awaiting";
+    awaiting = event.await;
+  }
+  if (event.type === "run.completed") {
+    status = "submitted";
+    awaiting = null;
+    steps = event.result.steps;
+    costUsd = event.result.costUsd;
+  }
+  if (event.type === "run.failed") {
+    status = "failed";
+    awaiting = null;
+  }
+  if (event.type === "run.cancelled") {
+    status = "cancelled";
+    awaiting = null;
+  }
+  if (event.type === "message.part" && event.part.kind === "tool_result") {
+    steps = event.part.step;
+    costUsd = steps * COST_PER_STEP_ESTIMATE;
+  }
+  // Clear awaiting when we get a tool result for the awaited call
+  if (
+    event.type === "message.part" &&
+    event.part.kind === "tool_result" &&
+    awaiting?.id === event.part.id
+  ) {
+    awaiting = null;
+    if (status === "awaiting") status = "in-progress";
   }
 
-  return state;
+  next.set(action.runId, {
+    ...run,
+    status,
+    awaiting,
+    steps,
+    costUsd,
+    issueTitle,
+    elapsedMs: Date.now() - run.startedAt,
+    events: [...run.events, event],
+  });
+  return next;
 }
 
 export function App() {
@@ -118,7 +112,9 @@ export function App() {
     }
     poll();
     const id = setInterval(poll, RUNS_POLL_INTERVAL_MS);
-    return () => clearInterval(id);
+    return () => {
+      clearInterval(id);
+    };
   }, []);
 
   // Stream active run
@@ -183,7 +179,9 @@ export function App() {
       if (e.key === "n" || e.key === "N") setView({ kind: "new-run" });
     }
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
   }, []);
 
   const liveRuns = Array.from(liveRunMap.values());
@@ -198,8 +196,12 @@ export function App() {
         liveRuns={liveRuns}
         selectedRunId={selectedRunId}
         onSelectRun={handleSelectRun}
-        onNewRun={() => setView({ kind: "new-run" })}
-        onModels={() => setView({ kind: "models" })}
+        onNewRun={() => {
+          setView({ kind: "new-run" });
+        }}
+        onModels={() => {
+          setView({ kind: "models" });
+        }}
       />
 
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">

@@ -19,7 +19,9 @@ export function useRunStream({ runId, onEvent, onClose }: UseRunStreamOptions) {
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
-    ws.onopen = () => setConnected(true);
+    ws.onopen = () => {
+      setConnected(true);
+    };
 
     ws.onmessage = (e) => {
       try {
@@ -42,7 +44,7 @@ export function useRunStream({ runId, onEvent, onClose }: UseRunStreamOptions) {
     return () => {
       ws.close();
     };
-  }, [runId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [runId]); // onEvent/onClose intentionally excluded — consumers memoize if needed
 
   const send = useCallback((ctrl: ServeControl) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

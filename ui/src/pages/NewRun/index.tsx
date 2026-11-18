@@ -42,7 +42,7 @@ export function NewRun({ onRunStarted }: NewRunProps) {
       .list()
       .then((ms) => {
         setModels(ms);
-        const defaultModel = ms.find((m) => m.id.includes("sonnet"))?.id ?? ms[0]?.id ?? "";
+        const defaultModel = ms.find((m) => m.id.includes("sonnet"))?.id ?? ms[0].id;
         setModel(defaultModel);
       })
       .catch(() => {
@@ -158,6 +158,7 @@ export function NewRun({ onRunStarted }: NewRunProps) {
                     setSelectedIssue(null);
                     setFindResults(null);
                   }}
+
                   className="mt-0.5 accent-amber-500"
                 />
                 <div className="flex-1 min-w-0">
@@ -181,7 +182,9 @@ export function NewRun({ onRunStarted }: NewRunProps) {
             <input
               type="url"
               value={githubUrl}
-              onChange={(e) => setGithubUrl(e.target.value)}
+              onChange={(e) => {
+                setGithubUrl(e.target.value);
+              }}
               placeholder="https://github.com/owner/repo/issues/123"
               className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500/50 font-mono"
             />
@@ -197,7 +200,9 @@ export function NewRun({ onRunStarted }: NewRunProps) {
               <input
                 type="text"
                 value={repoPath}
-                onChange={(e) => setRepoPath(e.target.value)}
+                onChange={(e) => {
+                  setRepoPath(e.target.value);
+                }}
                 placeholder="/path/to/repo"
                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500/50 font-mono"
               />
@@ -209,7 +214,9 @@ export function NewRun({ onRunStarted }: NewRunProps) {
               <input
                 type="text"
                 value={issueFile}
-                onChange={(e) => setIssueFile(e.target.value)}
+                onChange={(e) => {
+                  setIssueFile(e.target.value);
+                }}
                 placeholder="/path/to/issue.md"
                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500/50 font-mono"
               />
@@ -223,13 +230,19 @@ export function NewRun({ onRunStarted }: NewRunProps) {
               <input
                 type="text"
                 value={findQuery}
-                onChange={(e) => setFindQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleFind()}
+                onChange={(e) => {
+                  setFindQuery(e.target.value);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleFind();
+                }}
                 placeholder="GitHub repo URL, topic, or search prompt"
                 className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500/50"
               />
               <button
-                onClick={handleFind}
+                onClick={() => {
+                  void handleFind();
+                }}
                 disabled={findLoading || !findQuery.trim()}
                 className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
               >
@@ -246,7 +259,9 @@ export function NewRun({ onRunStarted }: NewRunProps) {
               <div className="flex-1">
                 <select
                   value={findLanguage}
-                  onChange={(e) => setFindLanguage(e.target.value)}
+                  onChange={(e) => {
+                    setFindLanguage(e.target.value);
+                  }}
                   className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-1.5 text-xs text-zinc-400 focus:outline-none focus:border-amber-500/50"
                 >
                   <option value="">Any language</option>
@@ -271,11 +286,11 @@ export function NewRun({ onRunStarted }: NewRunProps) {
                 {(["bug", "good first issue", "help wanted"] as const).map((lbl) => (
                   <button
                     key={lbl}
-                    onClick={() =>
+                    onClick={() => {
                       setFindLabel((prev) =>
                         prev.includes(lbl) ? prev.filter((x) => x !== lbl) : [...prev, lbl],
-                      )
-                    }
+                      );
+                    }}
                     className={`px-2 py-1 rounded text-xs transition-colors ${
                       findLabel.includes(lbl)
                         ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
@@ -297,7 +312,9 @@ export function NewRun({ onRunStarted }: NewRunProps) {
                     {findResults.length} result{findResults.length !== 1 ? "s" : ""}
                   </p>
                   <button
-                    onClick={() => setFindResults(null)}
+                    onClick={() => {
+                      setFindResults(null);
+                    }}
                     className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
                   >
                     Search again
@@ -316,7 +333,9 @@ export function NewRun({ onRunStarted }: NewRunProps) {
                           ? "border-amber-500/50 bg-amber-500/5"
                           : "border-zinc-800 hover:border-zinc-700"
                       }`}
-                      onClick={() => setSelectedIssue(c)}
+                      onClick={() => {
+                        setSelectedIssue(c);
+                      }}
                     >
                       <div className="flex items-start justify-between gap-3 mb-1">
                         <p className="text-sm text-zinc-200 leading-snug">{c.title}</p>
@@ -345,7 +364,9 @@ export function NewRun({ onRunStarted }: NewRunProps) {
                 <label className="text-xs font-medium text-zinc-400 mb-1.5 block">Model</label>
                 <select
                   value={model}
-                  onChange={(e) => setModel(e.target.value)}
+                  onChange={(e) => {
+                    setModel(e.target.value);
+                  }}
                   className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-amber-500/50"
                 >
                   {Object.entries(providerGroups).map(([provider, ms]) => (
@@ -365,7 +386,9 @@ export function NewRun({ onRunStarted }: NewRunProps) {
                   <input
                     type="checkbox"
                     checked={usePlan}
-                    onChange={(e) => setUsePlan(e.target.checked)}
+                    onChange={(e) => {
+                      setUsePlan(e.target.checked);
+                    }}
                     className="accent-amber-500"
                   />
                   <span className="text-sm text-zinc-300">Planning phase</span>
@@ -376,7 +399,9 @@ export function NewRun({ onRunStarted }: NewRunProps) {
               </div>
 
               <button
-                onClick={() => setShowBudget(!showBudget)}
+                onClick={() => {
+                  setShowBudget(!showBudget);
+                }}
                 className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
               >
                 {showBudget ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -421,7 +446,9 @@ export function NewRun({ onRunStarted }: NewRunProps) {
                         min={min}
                         max={max}
                         step={step}
-                        onChange={(e) => (onChange as (v: number) => void)(Number(e.target.value))}
+                        onChange={(e) => {
+                          (onChange as (v: number) => void)(Number(e.target.value));
+                        }}
                         className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-amber-500/50 font-mono"
                       />
                     </div>
@@ -433,7 +460,9 @@ export function NewRun({ onRunStarted }: NewRunProps) {
             {startError && <p className="text-sm text-red-400 mb-4">{startError}</p>}
 
             <button
-              onClick={handleStartRun}
+              onClick={() => {
+                void handleStartRun();
+              }}
               disabled={starting || !model}
               className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-sm rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
@@ -454,11 +483,14 @@ export function NewRun({ onRunStarted }: NewRunProps) {
 }
 
 function groupByProvider(models: ModelEntry[]): Record<string, ModelEntry[]> {
-  const groups: Record<string, ModelEntry[]> = {};
+  const groups: Partial<Record<string, ModelEntry[]>> = {};
   for (const m of models) {
-    const provider = m.provider;
-    if (!groups[provider]) groups[provider] = [];
-    groups[provider].push(m);
+    const existing = groups[m.provider];
+    if (existing) {
+      existing.push(m);
+    } else {
+      groups[m.provider] = [m];
+    }
   }
-  return groups;
+  return groups as Record<string, ModelEntry[]>;
 }

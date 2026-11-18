@@ -20,8 +20,8 @@ function extractIssueBody(report: string | null): string | null {
 }
 
 function formatElapsed(ms: number): string {
-  if (ms < MS_PER_MINUTE) return `${Math.round(ms / MS_PER_SECOND)}s`;
-  return `${Math.floor(ms / MS_PER_MINUTE)}m ${Math.round((ms % MS_PER_MINUTE) / MS_PER_SECOND)}s`;
+  if (ms < MS_PER_MINUTE) return `${String(Math.round(ms / MS_PER_SECOND))}s`;
+  return `${String(Math.floor(ms / MS_PER_MINUTE))}m ${String(Math.round((ms % MS_PER_MINUTE) / MS_PER_SECOND))}s`;
 }
 
 function formatCost(usd: number): string {
@@ -48,7 +48,7 @@ export function RunDetailPage({ runId }: RunDetailProps) {
         setData(d);
         setLoading(false);
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to load run");
         setLoading(false);
       });
@@ -160,7 +160,9 @@ export function RunDetailPage({ runId }: RunDetailProps) {
         {info?.prTitle && (
           <div>
             <button
-              onClick={() => setPlanExpanded(!planExpanded)}
+              onClick={() => {
+                setPlanExpanded(!planExpanded);
+              }}
               className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
             >
               {planExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -231,7 +233,9 @@ export function RunDetailPage({ runId }: RunDetailProps) {
           {(["diff", "report", "trajectory"] as Tab[]).map((t) => (
             <button
               key={t}
-              onClick={() => setTab(t)}
+              onClick={() => {
+                setTab(t);
+              }}
               className={`px-4 py-2.5 text-xs font-medium transition-colors ${
                 tab === t
                   ? "text-zinc-100 border-b-2 border-amber-500"
