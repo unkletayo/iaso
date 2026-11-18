@@ -42,7 +42,20 @@ import {
   loopNudge,
 } from "./prompts.js";
 
-export type RunStatus = "submitted" | "budget_exceeded" | "no_tool_use" | "stuck" | "error";
+export type RunStatus =
+  "submitted" | "budget_exceeded" | "no_tool_use" | "stuck" | "cancelled" | "error";
+
+export interface LoopHooks {
+  onStepStarted?: (step: number) => void;
+  onText?: (step: number, text: string) => void;
+  /** Called before tool execution. Return "auto" to run, "deny" to block. */
+  onToolApproval?: (
+    step: number,
+    call: { id: string; name: string; input: unknown },
+  ) => Promise<"auto" | "deny">;
+  onToolResult?: (step: number, id: string, name: string, output: string, error: boolean) => void;
+  onContextEvent?: (step: number, type: "compacted" | "loop_detected" | "stuck") => void;
+}
 
 export interface LoopOptions {
   provider: ModelProvider;
@@ -66,8 +79,9 @@ export interface LoopOptions {
   trajectory?: TrajectoryWriter;
   /** Where full copies of shortened outputs go. Without it nothing is saved. */
   outputs?: OutputStore;
-  /** The model's text as it is written, with the step it belongs to (M13 step 13F). */
-  onText?: (delta: string, step: number) => void;
+  hooks?: LoopHooks;
+  /** Return true to cancel the run between steps. */
+  cancel?: () => boolean;
   /** Reasoning effort for every model call of this loop (M13 step 13E). */
   effort?: Effort;
 }
@@ -192,6 +206,13 @@ async function execute(
   step: number,
   callNo: number,
 ): Promise<ExecutedCall> {
+  if (l.opts.hooks?.onToolApproval) {
+    const action = await l.opts.hooks.onToolApproval(step, call);
+    if (action === "deny") {
+      const msg = "Tool call denied by approval policy.";
+      return { call, shown: msg, raw: msg, isError: true };
+    }
+  }
   const tool = l.opts.tools.find((t) => t.definition.name === call.name);
   if (!tool) {
     const known = l.opts.tools.map((t) => t.definition.name).join(", ");
@@ -229,7 +250,10 @@ async function executeAll(l: Loop, calls: ToolCall[], step: number): Promise<Exe
       done.push({ call, shown: NOT_RUN_TIME, raw: NOT_RUN_TIME, isError: true });
       continue;
     }
-    done.push(await execute(l, call, step, i + 1));
+    const result = await execute(l, call, step, i + 1);
+    done.push(result);
+    const d = result;
+    l.opts.hooks?.onToolResult?.(step, d.call.id, d.call.name, d.shown, d.isError);
     if (l.run.submission ?? l.run.plan) break;
   }
   return done;
@@ -408,6 +432,7 @@ async function compact(l: Loop, step: number, tokensBefore: number, target: numb
       summary: result.summary,
       costUsd,
     });
+    l.opts.hooks?.onContextEvent?.(step, "compacted");
   } catch (err) {
     l.compactAfterStep = step + COMPACT_RETRY_AFTER_STEPS;
     l.pendingEvents.push({
@@ -471,26 +496,21 @@ async function prepare(
 
 /** One model call plus its tool calls. */
 async function runStep(l: Loop, step: number): Promise<StepOutcome> {
+  l.opts.hooks?.onStepStarted?.(step);
   const { opts } = l;
   const { built, size: contextTokens } = await prepare(l, step);
   const phase = l.run.task.phase;
   const started = performance.now();
 
   // M13 step 13C: the model call, retries included, stops when the run's time runs out.
-  const { onText } = opts;
   const response = await opts.provider.chat(built.request, {
     signal: AbortSignal.timeout(Math.max(1, opts.budget.timeLeftMs)),
-    ...(onText === undefined
-      ? {}
-      : {
-          onText: (delta: string) => {
-            onText(delta, step);
-          },
-        }),
   });
   const costUsd = l.cost.add(response.usage);
   l.meter.record(response.usage.inputTokens, built.request.messages.length, built.volatileTokens);
   l.steps = step;
+  const responseText = textOf(response.content);
+  if (responseText) l.opts.hooks?.onText?.(step, responseText);
   // Providers reject an assistant turn with no content, so keep the history valid.
   const content: ContentBlock[] =
     response.content.length > 0 ? response.content : [{ type: "text", text: "(no response)" }];
@@ -532,15 +552,18 @@ async function runStep(l: Loop, step: number): Promise<StepOutcome> {
   if (repeat) {
     l.loopNudges += 1;
     if (l.loopNudges > MAX_LOOP_NUDGES) {
+      l.opts.hooks?.onContextEvent?.(step, "stuck");
       return {
         done: true,
         status: "stuck",
         message: `The agent kept repeating itself after ${String(MAX_LOOP_NUDGES)} warnings: ${repeat.description}.`,
       };
     }
+    l.opts.hooks?.onContextEvent?.(step, "loop_detected");
     nudges.push(loopNudge(repeat.description));
   }
   l.history.push(resultsMessage(done, nudges));
+  if (l.opts.cancel?.()) return { done: true, status: "cancelled" };
   return { done: false };
 }
 
@@ -567,6 +590,7 @@ interface Ending {
 async function drive(l: Loop): Promise<Ending> {
   try {
     for (let step = 1; ; step += 1) {
+      if (l.opts.cancel?.()) return { status: "cancelled" };
       const check = l.opts.budget.check({ steps: step - 1, costUsd: totalCost(l) });
       if (!check.ok) return { status: "budget_exceeded", message: check.message };
       const outcome = await runStep(l, step);

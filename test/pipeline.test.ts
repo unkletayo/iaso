@@ -188,7 +188,7 @@ describe("runPipeline: streaming", () => {
         mockToolCall("b", "bash", { cmd: "ls" }, [{ type: "text", text: "Fixing." }]),
         submit,
       ],
-      { onText: (delta, step) => got.push([delta, step]) },
+      { hooks: { onText: (step, text) => got.push([text, step]) } },
     );
     await runPipeline(s.options);
     // Each phase is its own loop, so the fix phase starts again at step 1.

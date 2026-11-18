@@ -673,7 +673,7 @@ describe("runLoop: streaming", () => {
         mockToolCall("c1", "bash", { cmd: "ls" }, [{ type: "text", text: "Looking around." }]),
         submitCall(),
       ],
-      { onText: (delta, step) => got.push([delta, step]) },
+      { hooks: { onText: (step, text) => got.push([text, step]) } },
     );
     await s.run();
     expect(got).toEqual([["Looking around.", 1]]);
