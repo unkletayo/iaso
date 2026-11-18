@@ -1,10 +1,12 @@
 # Iaso
 
+<!-- LIVING-DOC: update this file whenever the application's behaviour, commands, flow, or configuration change. Do not let it describe what was planned — only what works now. -->
+
 Iaso (Ἰασώ) is the Greek goddess of recovery and healing. This agent brings broken code back to health.
 
 Iaso is a command-line coding agent that takes a bug report and a repository, reproduces the bug with a failing test, applies a minimal fix, verifies the tests pass, and outputs a patch. You review the patch and open the PR. Iaso never pushes code on its own.
 
-**Status:** active development. `iaso models`, `iaso plan`, `iaso run`, `iaso replay`, `iaso find`, `iaso pr` and `iaso bench` all work, from a local repo or a GitHub issue URL.
+**Status:** active development. `iaso models`, `iaso plan`, `iaso run`, `iaso serve`, `iaso replay`, `iaso find`, `iaso pr` and `iaso bench` all work, from a local repo or a GitHub issue URL.
 
 One real benchmark result: **7 of 10 SWE-bench Lite tasks resolved** (95% CI 40%–89%), graded by the official harness, at a mean of **\$0.10 per task** using Claude Haiku.
 
@@ -117,6 +119,48 @@ Without a `GITHUB_TOKEN`, GitHub caps at 60 calls an hour and Iaso measures 6 pr
 
 ---
 
+## Stream a run over stdio
+
+`iaso serve --stdio` runs the agent and streams every event as a JSON line to stdout. Stdin accepts JSON control messages (`approve`, `reject`, `cancel`). This is the integration point for UIs and other callers that want a live feed.
+
+```sh
+# Start a run and stream events
+iaso serve --stdio \
+           --repo ./my-project --issue ./bug.md \
+           --model anthropic:claude-haiku-5-5
+
+# Each output line is one JSON object, e.g.:
+# {"type":"run.created","run_id":"20241118T123456-ab12","status":"created"}
+# {"type":"run.in-progress","run_id":"...","status":"in-progress"}
+# {"type":"message.part","run_id":"...","part":{"kind":"tool_call",...}}
+# {"type":"run.awaiting","run_id":"...","status":"awaiting","await":{...}}
+# {"type":"run.completed","run_id":"...","status":"completed","result":{...}}
+```
+
+Event types:
+
+| Type              | Meaning                                                                 |
+| ----------------- | ----------------------------------------------------------------------- |
+| `run.created`     | Run ID assigned, source ready                                           |
+| `run.in-progress` | First step started                                                      |
+| `message.part`    | A streaming piece: text delta, tool call, tool result, or context event |
+| `run.awaiting`    | A tool needs approval before it can run                                 |
+| `run.completed`   | Agent submitted; `result` holds the full `PipelineResult`               |
+| `run.failed`      | Run ended without submitting                                            |
+| `run.cancelled`   | Cancelled via a `cancel` control message                                |
+
+Control messages (write to stdin, one JSON per line):
+
+```json
+{"kind": "approve", "id": "<tool-call-id>"}
+{"kind": "reject",  "id": "<tool-call-id>", "reason": "optional"}
+{"kind": "cancel"}
+```
+
+Every tool call produces a `run.awaiting` event before running, so callers gate each one. Progress messages (source, sandbox status) go to stderr so stdout stays JSON-only.
+
+---
+
 ## Open a pull request
 
 After a successful run:
@@ -192,18 +236,22 @@ Pass it with `--config`. For local repos, it's loaded automatically; for cloned 
 ```
 src/
   cli.ts           entry point (commander)
-  commands/        models, run/plan, replay, bench, find, pr
-  agent/           loop, plan phase, pipeline, prompts, report, budget
-  context/         token budget, shaping, staleness, loop detection, compaction
+  config.ts        .iaso.json schema and defaults
+  models.ts        model catalogue loader (reads models.json)
+  commands/        run/plan, serve, replay, bench, find, pr, models
+  core/            session API — event streaming + approval control (used by serve)
+  agent/           loop, plan phase, pipeline, attempts, prompts, report, budget, verify, secrets
+  context/         token budget, shaping, staleness, loop detection, compaction, state/notes
   providers/       Anthropic, OpenAI-compatible, mock, registry, retry
-  sandbox/         Docker sandbox, images, prebuilt SWE-bench images
+  sandbox/         Docker sandbox, images, prebuilt SWE-bench images, worktree sandbox
   sources/         local repo, GitHub issue, SWE-bench loader
-  tools/           bash, read_file, edit_file, notes, submit, submit_plan
+  tools/           bash, read_file, edit_file, notes, submit, submit_plan, read_output
   telemetry/       cost tracking and trajectory logging
   bench/           benchmark runner, harness call, results
   oss/             contribution rules, AI-policy reading, claim check, publisher
 test/              unit tests + opt-in integration, live and net tests
-models.json        model catalogue
+models.json        model catalogue (prices, context windows, provider keys)
+INTERNALS.md       full contributor guide: module map, data flow, key abstractions
 ```
 
 ---
@@ -250,7 +298,7 @@ Progress and the full build plan: `PROGRESS.md`.
 
 ## What's next
 
-- Web UI (in progress): `iaso server` serving a React frontend — run history, live step feed, diff viewer, trajectory explorer
+- Session API (`iaso serve --stdio`) is complete; a React web UI is planned next
 - Gemini provider (M8)
 - Podman + unsafe local mode without Docker (M9)
 - Larger benchmark run (50 tasks)
