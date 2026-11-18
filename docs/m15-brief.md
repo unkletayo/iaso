@@ -198,3 +198,19 @@ Model, budget, and plan-toggle only appear after an issue is confirmed.
 - Re-running / editing a completed run
 - Settings UI (API keys, default model)
 - `iaso pr` flow in-browser
+
+---
+
+## Direction contract
+
+**THESIS:** A dark developer control surface that exposes every agent step as a live feed and a reviewable diff — not a chat window, not a summary dashboard. Refuses the "AI assistant" layout convention. The developer is a reviewer, not a prompt author.
+
+**OWN-WORLD:** Near-black background (zinc-950, #09090b). Sidebar zinc-900. Cards/panels zinc-900 with zinc-800 borders. Primary text zinc-100. Secondary zinc-400. Functional color only: amber-500 running/awaiting, green-500 submitted/verified, red-500 failed/error, zinc-600 cancelled. Monospace (JetBrains Mono via Google Fonts) for all code/tool calls/diffs. Geometric sans (Inter via Google Fonts) for chrome. No decorative color, no gradients, no glass.
+
+**STORY:** Developer opens app → sidebar shows run history → clicks "New run" → picks a source → starts the agent → watches step cards stream in real time → approves or rejects tool calls via A/R keyboard shortcut → run completes → Run Detail opens automatically with diff + report.
+
+**FIRST VIEWPORT:** 220px fixed left sidebar (run history list, New run button at top, runs below). Main panel takes the rest: on first load, centered empty state + New run CTA. Active run shows full-height live feed with approval banner pinned at top when awaiting. No decorative chrome beyond a 1px zinc-800 border separating sidebar from main.
+
+**FORM:** Two-column master-detail layout. Code-led build, no comp. Seed: none (unavailable).
+
+**FINISH:** unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance.

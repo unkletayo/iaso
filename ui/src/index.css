@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: theme(colors.zinc.950);
+  --color-surface: theme(colors.zinc.900);
+  --color-border: theme(colors.zinc.800);
+  --color-text: theme(colors.zinc.100);
+  --color-muted: theme(colors.zinc.400);
+  --color-running: #f59e0b;
+  --color-submitted: #10b981;
+  --color-failed: #ef4444;
+  --color-cancelled: #71717a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: "Inter", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background-color: rgba(245, 158, 11, 0.3);
+  color: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: theme(colors.zinc.700);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: theme(colors.zinc.600);
+}
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid theme(colors.amber.500);
+  outline-offset: 2px;
+}
+
+/* Diff colors */
+.diff-line-add {
+  background-color: rgba(16, 185, 129, 0.1);
+  color: #6ee7b7;
+}
+
+.diff-line-add .line-num {
+  color: #10b981;
+}
+
+.diff-line-del {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+}
+
+.diff-line-del .line-num {
+  color: #ef4444;
+}
+
+.diff-line-hunk {
+  background-color: rgba(99, 102, 241, 0.1);
+  color: theme(colors.zinc.400);
+  font-style: italic;
+}
+
+/* Streaming text cursor */
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.streaming-cursor::after {
+  content: "▋";
+  animation: blink 1s step-end infinite;
+  color: theme(colors.amber.400);
+}
+
+/* Status pulse */
+@keyframes pulse-amber {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.pulse-running {
+  animation: pulse-amber 1.5s ease-in-out infinite;
+}
