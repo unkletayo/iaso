@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-11-18T10:47:11.977Z",
+        "reason": "brief-pinned: docs/m15-brief.md §3 names Inter as the geometric sans for UI chrome"
+      }
+    ]
+  }
+}
