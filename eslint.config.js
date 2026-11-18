@@ -3,7 +3,20 @@ import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  { ignores: ["dist", "node_modules", "runs", "viewer", "eslint.config.js", "test/fixtures"] },
+  {
+    ignores: [
+      "dist",
+      "node_modules",
+      "runs",
+      "viewer",
+      "eslint.config.js",
+      "test/fixtures",
+      "ui/dist",
+      "ui/postcss.config.cjs",
+      "ui/tailwind.config.ts",
+      "ui/vite.config.ts",
+    ],
+  },
   eslint.configs.recommended,
   tseslint.configs.strictTypeChecked,
   {

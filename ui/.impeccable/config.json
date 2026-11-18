@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-11-18T11:08:20.973Z",
+        "reason": "brief-pinned: docs/m15-brief.md §3 specifies Inter as the UI chrome font"
+      }
+    ]
+  }
+}

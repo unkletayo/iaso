@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-18T00:00:00.000Z",
+  "title": "Design System: Iaso Web UI",
+  "extensions": {
+    "colorMeta": {
+      "bg":           { "role": "neutral",  "displayName": "Near-Black Background",  "canonical": "#09090b", "tonalRamp": ["#09090b","#0d0d0f","#111113","#161618","#18181b","#27272a","#3f3f46","#52525b"] },
+      "surface":      { "role": "neutral",  "displayName": "Dark Surface",           "canonical": "#18181b", "tonalRamp": ["#09090b","#111113","#18181b","#1f1f22","#27272a","#3f3f46","#52525b","#71717a"] },
+      "border":       { "role": "neutral",  "displayName": "Border",                 "canonical": "#27272a", "tonalRamp": ["#09090b","#18181b","#27272a","#3f3f46","#52525b","#71717a","#a1a1aa","#d4d4d8"] },
+      "text":         { "role": "neutral",  "displayName": "Primary Text",           "canonical": "#f4f4f5", "tonalRamp": ["#09090b","#27272a","#52525b","#71717a","#a1a1aa","#d4d4d8","#e4e4e7","#f4f4f5"] },
+      "muted":        { "role": "neutral",  "displayName": "Secondary Text",         "canonical": "#a1a1aa", "tonalRamp": ["#27272a","#3f3f46","#52525b","#71717a","#a1a1aa","#d4d4d8","#e4e4e7","#f4f4f5"] },
+      "muted-deep":   { "role": "neutral",  "displayName": "De-emphasis",            "canonical": "#71717a", "tonalRamp": ["#18181b","#27272a","#3f3f46","#52525b","#71717a","#a1a1aa","#d4d4d8","#e4e4e7"] },
+      "muted-faint":  { "role": "neutral",  "displayName": "Faint",                  "canonical": "#52525b", "tonalRamp": ["#09090b","#18181b","#27272a","#3f3f46","#52525b","#71717a","#a1a1aa","#d4d4d8"] },
+      "running":      { "role": "primary",  "displayName": "Amber Signal",           "canonical": "#f59e0b", "tonalRamp": ["#451a03","#78350f","#92400e","#b45309","#d97706","#f59e0b","#fbbf24","#fde68a"] },
+      "submitted":    { "role": "secondary","displayName": "Verified Green",         "canonical": "#10b981", "tonalRamp": ["#022c22","#064e3b","#065f46","#047857","#059669","#10b981","#34d399","#6ee7b7"] },
+      "failed":       { "role": "tertiary", "displayName": "Error Red",              "canonical": "#ef4444", "tonalRamp": ["#450a0a","#7f1d1d","#991b1b","#b91c1c","#dc2626","#ef4444","#f87171","#fca5a5"] },
+      "approval-bg":  { "role": "neutral",  "displayName": "Approval Background",    "canonical": "#451a03", "tonalRamp": ["#1c0702","#2d0e04","#3b1104","#451a03","#78350f","#92400e","#b45309","#d97706"] }
+    },
+    "typographyMeta": {
+      "title":     { "displayName": "Title",     "purpose": "Page headings (New run, Models). Only use above 14px." },
+      "label":     { "displayName": "Label",     "purpose": "Form labels, section headers, button text, tab labels. The primary text size for all chrome." },
+      "mono-data": { "displayName": "Mono Data", "purpose": "All machine-generated values: run IDs, costs, steps, elapsed, tool names, model identifiers, diff lines." },
+      "mono-xs":   { "displayName": "Mono XS",   "purpose": "Secondary metadata in constrained spaces: timestamps, step numbers, kbd hints." }
+    },
+    "shadows": [
+      {
+        "name": "follow-anchor",
+        "value": "0 10px 15px -3px rgba(0,0,0,0.5), 0 4px 6px -4px rgba(0,0,0,0.4)",
+        "purpose": "Elevates the ↓ Follow anchor button above the live feed scroll container. Only appears when auto-scroll is paused. The only shadow in the build."
+      }
+    ],
+    "motion": [
+      {
+        "name": "pulse-running",
+        "value": "pulse-amber 1.5s ease-in-out infinite",
+        "keyframes": "@keyframes pulse-amber { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }",
+        "purpose": "Status dot pulse on created / in-progress / awaiting runs. Signals the run is consuming the developer's attention now."
+      },
+      {
+        "name": "streaming-cursor",
+        "value": "blink 1s step-end infinite",
+        "keyframes": "@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }",
+        "purpose": "▋ cursor glyph on .streaming-cursor::after in amber-400. Signals live text is arriving."
+      },
+      {
+        "name": "loading-spinner",
+        "value": "spin 1s linear infinite",
+        "purpose": "Loader2 icon on find-search and start-run loading states only. Not used for data loading or navigation."
+      },
+      {
+        "name": "hover-transition",
+        "value": "color 150ms ease-in-out, background-color 150ms ease-in-out",
+        "purpose": "All interactive elements. Tailwind transition-colors default. No explicit duration override in the codebase."
+      }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Start run. Full-width on form pages. Amber on near-black.",
+      "html": "<button class=\"ds-btn-primary\">Start run</button>",
+      "css": ".ds-btn-primary { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 10px 24px; background-color: #f59e0b; color: #09090b; font-family: 'Inter', system-ui, sans-serif; font-size: 14px; font-weight: 600; border: none; border-radius: 4px; cursor: pointer; transition: background-color 150ms ease-in-out; } .ds-btn-primary:hover { background-color: #fbbf24; } .ds-btn-primary:focus-visible { outline: 2px solid #f59e0b; outline-offset: 2px; } .ds-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Find issues, secondary actions. Dark surface with light text.",
+      "html": "<button class=\"ds-btn-secondary\">Find</button>",
+      "css": ".ds-btn-secondary { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background-color: #27272a; color: #e4e4e7; font-family: 'Inter', system-ui, sans-serif; font-size: 14px; font-weight: 400; border: none; border-radius: 4px; cursor: pointer; transition: background-color 150ms ease-in-out; } .ds-btn-secondary:hover { background-color: #3f3f46; } .ds-btn-secondary:focus-visible { outline: 2px solid #f59e0b; outline-offset: 2px; } .ds-btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Sidebar nav, collapse toggles. No background at rest.",
+      "html": "<button class=\"ds-btn-ghost\">Models</button>",
+      "css": ".ds-btn-ghost { display: flex; align-items: center; gap: 4px; padding: 4px 8px; background-color: transparent; color: #71717a; font-family: 'Inter', system-ui, sans-serif; font-size: 12px; font-weight: 400; border: none; border-radius: 4px; cursor: pointer; transition: color 150ms ease-in-out, background-color 150ms ease-in-out; } .ds-btn-ghost:hover { color: #d4d4d8; background-color: #27272a; } .ds-btn-ghost:focus-visible { outline: 2px solid #f59e0b; outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "GitHub URL, repo path, issue file, search prompt. Focus shifts border to amber.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"https://github.com/owner/repo/issues/123\" />",
+      "css": ".ds-input { width: 100%; padding: 8px 12px; background-color: #18181b; border: 1px solid #27272a; border-radius: 4px; color: #f4f4f5; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 14px; outline: none; transition: border-color 150ms ease-in-out; } .ds-input::placeholder { color: #52525b; } .ds-input:focus { border-color: rgba(245, 158, 11, 0.5); }"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "status-chip-running",
+      "description": "Inline run status indicator with dot. Dot pulses on active runs.",
+      "html": "<span class=\"ds-status-chip ds-status-running\"><span class=\"ds-status-dot\"></span>running</span>",
+      "css": ".ds-status-chip { display: inline-flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; } .ds-status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; } .ds-status-running { color: #f59e0b; } .ds-status-running .ds-status-dot { background-color: #f59e0b; animation: ds-pulse-amber 1.5s ease-in-out infinite; } .ds-status-submitted { color: #10b981; } .ds-status-submitted .ds-status-dot { background-color: #10b981; } .ds-status-failed { color: #ef4444; } .ds-status-failed .ds-status-dot { background-color: #ef4444; } .ds-status-cancelled { color: #71717a; } .ds-status-cancelled .ds-status-dot { background-color: #52525b; } @keyframes ds-pulse-amber { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }"
+    },
+    {
+      "name": "Tool Call Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Expandable card for each tool call in the live feed. Amber tool name, chevron toggle.",
+      "html": "<div class=\"ds-tool-card\"><button class=\"ds-tool-card-header\"><svg class=\"ds-chevron\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"9 18 15 12 9 6\"/></svg><span class=\"ds-tool-step\">#4</span><span class=\"ds-tool-name\">bash</span><span class=\"ds-tool-preview\">{\"cmd\":\"npm test\"}</span></button></div>",
+      "css": ".ds-tool-card { border: 1px solid #27272a; border-radius: 4px; background-color: rgba(24,24,27,0.6); overflow: hidden; } .ds-tool-card-header { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; background: none; border: none; cursor: pointer; text-align: left; transition: background-color 150ms ease-in-out; } .ds-tool-card-header:hover { background-color: rgba(39,39,42,0.4); } .ds-chevron { color: #71717a; flex-shrink: 0; } .ds-tool-step { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #71717a; } .ds-tool-name { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: #fbbf24; } .ds-tool-preview { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #71717a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }"
+    },
+    {
+      "name": "Approval Banner",
+      "kind": "custom",
+      "description": "Full-width amber-950 strip pinned below the live feed header when a tool call awaits approval. Keyboard hints A / R.",
+      "html": "<div class=\"ds-approval-banner\"><div class=\"ds-approval-info\"><div class=\"ds-approval-tool-row\"><span class=\"ds-approval-tool-name\">bash</span><span class=\"ds-approval-label\">awaiting approval</span></div><p class=\"ds-approval-preview\">{\"cmd\":\"git push origin fix/null-check\"}</p></div><div class=\"ds-approval-actions\"><button class=\"ds-approve-btn\">Approve<kbd>A</kbd></button><button class=\"ds-reject-btn\">Reject<kbd>R</kbd></button></div></div>",
+      "css": ".ds-approval-banner { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background-color: #451a03; border-bottom: 1px solid rgba(146,64,14,0.6); flex-shrink: 0; } .ds-approval-info { flex: 1; min-width: 0; } .ds-approval-tool-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; } .ds-approval-tool-name { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: #fbbf24; } .ds-approval-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(245,158,11,0.6); } .ds-approval-preview { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #a1a1aa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; } .ds-approval-actions { display: flex; gap: 8px; flex-shrink: 0; } .ds-approve-btn { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background-color: rgba(20,83,45,0.4); border: 1px solid rgba(21,128,61,0.5); color: #34d399; font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 500; border-radius: 4px; cursor: pointer; transition: background-color 150ms ease-in-out; } .ds-approve-btn:hover { background-color: rgba(20,83,45,0.6); } .ds-reject-btn { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background-color: rgba(69,10,10,0.4); border: 1px solid rgba(153,27,27,0.5); color: #f87171; font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 500; border-radius: 4px; cursor: pointer; transition: background-color 150ms ease-in-out; } .ds-reject-btn:hover { background-color: rgba(69,10,10,0.6); } .ds-approve-btn kbd, .ds-reject-btn kbd { font-family: 'JetBrains Mono', monospace; font-size: 10px; opacity: 0.7; }"
+    },
+    {
+      "name": "Source Selector Card",
+      "kind": "card",
+      "description": "Radio card for choosing how to start a run. Selected state uses amber-500/5 tint + amber border.",
+      "html": "<label class=\"ds-source-card ds-source-selected\"><input type=\"radio\" name=\"source\" checked /><div class=\"ds-source-content\"><div class=\"ds-source-label\">GitHub issue URL</div><p class=\"ds-source-desc\">Paste a specific issue link</p></div></label>",
+      "css": ".ds-source-card { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: 4px; border: 1px solid #27272a; cursor: pointer; transition: border-color 150ms ease-in-out, background-color 150ms ease-in-out; } .ds-source-card:hover { border-color: #3f3f46; background-color: rgba(24,24,27,0.5); } .ds-source-selected { border-color: rgba(245,158,11,0.5); background-color: rgba(245,158,11,0.05); } .ds-source-content { flex: 1; } .ds-source-label { font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 500; color: #e4e4e7; } .ds-source-desc { font-family: 'Inter', sans-serif; font-size: 12px; color: #71717a; margin: 2px 0 0; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Reviewer's Console",
+    "overview": "Iaso's UI is not a chat window and not a summary dashboard. It is a reviewer's console — a surface designed for the act of watching an agent work and judging its output with the same rigor you would apply to a code review. Every design decision defers to that job: the developer is a reviewer, not a prompt author, and the UI earns no attention it does not need.\n\nThe world is near-black (zinc-950, #09090b). Surfaces are zinc-900 (#18181b). There is no decorative color: amber is "this needs your attention now," green is "this passed," red is "this failed." Color works exactly like a terminal's status output, and nothing else.\n\nDensity is the value proposition. This UI is opened in a split-attention state — editor in one window, browser tab in another — so it must surface maximum information in minimum space. Labels are text-xs (12px). Metadata is text-[10px] (10px) in monospace. There is no body prose on any screen except the report tab.",
+    "keyCharacteristics": [
+      "Near-black background; zinc-900 surfaces; zinc-800 borders — a strict three-layer tonal stack",
+      "Amber is the single accent; it appears only on active/awaiting state, focus rings, selected rows, and the primary CTA",
+      "Monospace (JetBrains Mono) for all data — run IDs, costs, steps, elapsed times, tool names, diff lines",
+      "No decorative shadows, no gradients, no glass",
+      "Motion is limited to three named uses: status pulse on active runs, streaming cursor on live text, spinner on loading actions"
+    ],
+    "rules": [
+      { "name": "The One Accent Rule", "body": "Amber (#f59e0b) is used in exactly one semantic category per screen: state that requires the developer's attention or the primary action available. It is never used decoratively, never used for category labels, never used to highlight completed or neutral content.", "section": "colors" },
+      { "name": "The Cancelled Rule", "body": "Cancelled is not an error. Its dot is zinc-600 (#52525b), not zinc-500; its label text is zinc-500 (#71717a). The distinction between cancelled and muted metadata is intentional and must be preserved.", "section": "colors" },
+      { "name": "The No-Body Rule", "body": "This is a tool, not a document. Inter is never used for prose paragraphs on tool screens. The report tab renders agent-generated markdown via Tailwind Typography (prose-sm prose-invert) — this is an isolated rendering context for external content, not part of the design system's type hierarchy.", "section": "typography" },
+      { "name": "The Mono-Data Rule", "body": "Every value that could appear in a terminal — run IDs, costs, steps, model identifiers, tool call names, diff lines, file paths — uses JetBrains Mono. Inter is reserved for human-authored labels and instructions.", "section": "typography" },
+      { "name": "The Tonal Stack Rule", "body": "Surfaces at different depths are expressed only through the zinc ramp: near-black background, dark surface, border. No drop shadows create this layering.", "section": "elevation" },
+      { "name": "The One Radius Rule", "body": "The build uses one border-radius value everywhere: 4px (Tailwind rounded). No mixed-radius treatment. Rounded pills (rounded-full) appear only on the 6×6px status dots.", "section": "shapes" }
+    ],
+    "dos": [
+      "Do use zinc-800 (#27272a) borders at 1px for all card, panel, and divider separations.",
+      "Do use JetBrains Mono for every value a developer might see in a terminal.",
+      "Do show the pulsing amber dot (pulse-running, 1.5s ease-in-out) on status chips for created, in-progress, and awaiting states only.",
+      "Do use amber (#f59e0b) on the primary CTA, the approval banner context, focus rings, and the selected sidebar row's left border.",
+      "Do use text-zinc-500 font-mono at text-[10px] for all secondary run metadata in constrained spaces."
+    ],
+    "donts": [
+      "Don't add decorative gradients, glass effects, or drop shadows to panels, sidebars, or cards.",
+      "Don't use amber on a completed or static state.",
+      "Don't introduce a border-radius other than 4px.",
+      "Don't use Inter for terminal-style data values (costs, run IDs, step counts).",
+      "Don't canonize window.confirm as the design system's confirmation pattern."
+    ]
+  }
+}
