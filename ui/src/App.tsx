@@ -5,10 +5,14 @@ import { Sidebar } from "./components/Sidebar";
 import { NewRun } from "./pages/NewRun";
 import { LiveFeed } from "./pages/LiveFeed";
 import { RunDetailPage } from "./pages/RunDetail";
+import { ModelsPage } from "./pages/ModelsPage";
 import { useRunStream } from "./hooks/useRunStream";
 
 type View =
-  { kind: "new-run" } | { kind: "live"; runId: string } | { kind: "detail"; runId: string };
+  | { kind: "new-run" }
+  | { kind: "live"; runId: string }
+  | { kind: "detail"; runId: string }
+  | { kind: "models" };
 
 type LiveRunAction =
   | { type: "CREATE"; runId: string; model: string }
@@ -195,6 +199,7 @@ export function App() {
         selectedRunId={selectedRunId}
         onSelectRun={handleSelectRun}
         onNewRun={() => setView({ kind: "new-run" })}
+        onModels={() => setView({ kind: "models" })}
       />
 
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
@@ -206,6 +211,7 @@ export function App() {
           </div>
         )}
         {view.kind === "detail" && <RunDetailPage runId={view.runId} />}
+        {view.kind === "models" && <ModelsPage />}
       </main>
     </div>
   );

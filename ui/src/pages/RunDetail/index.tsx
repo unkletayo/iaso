@@ -13,6 +13,12 @@ type Tab = "diff" | "report" | "trajectory";
 const MS_PER_MINUTE = 60_000;
 const MS_PER_SECOND = 1_000;
 
+function extractIssueBody(report: string | null): string | null {
+  if (!report) return null;
+  const match = /## Issue\n\n([\s\S]+?)\n\n##/.exec(report);
+  return match?.[1]?.trim() ?? null;
+}
+
 function formatElapsed(ms: number): string {
   if (ms < MS_PER_MINUTE) return `${Math.round(ms / MS_PER_SECOND)}s`;
   return `${Math.floor(ms / MS_PER_MINUTE)}m ${Math.round((ms % MS_PER_MINUTE) / MS_PER_SECOND)}s`;
@@ -66,6 +72,7 @@ export function RunDetailPage({ runId }: RunDetailProps) {
 
   const info = data.runInfo;
   const status = (info?.status ?? data.status) as RunStatus;
+  const issueBody = extractIssueBody(data.report);
 
   return (
     <div className="flex-1 flex min-h-0 overflow-hidden">
@@ -82,11 +89,14 @@ export function RunDetailPage({ runId }: RunDetailProps) {
           </div>
         </div>
 
-        {/* Issue title */}
+        {/* Issue title + body */}
         {data.issueTitle && (
           <div>
             <p className="text-xs text-zinc-500 mb-0.5">Issue</p>
             <p className="text-sm text-zinc-200 leading-snug">{data.issueTitle}</p>
+            {issueBody && (
+              <p className="mt-1 text-xs text-zinc-500 leading-relaxed line-clamp-3">{issueBody}</p>
+            )}
           </div>
         )}
 
@@ -125,7 +135,7 @@ export function RunDetailPage({ runId }: RunDetailProps) {
                 <span
                   className={
                     info.verification.reproduction.status === "pass"
-                      ? "text-emerald-400"
+                      ? "text-green-400"
                       : "text-red-400"
                   }
                 >
@@ -136,7 +146,7 @@ export function RunDetailPage({ runId }: RunDetailProps) {
                 <span className="text-zinc-600">suite</span>
                 <span
                   className={
-                    info.verification.suite.status === "pass" ? "text-emerald-400" : "text-red-400"
+                    info.verification.suite.status === "pass" ? "text-green-400" : "text-red-400"
                   }
                 >
                   {info.verification.suite.status}
@@ -181,17 +191,32 @@ export function RunDetailPage({ runId }: RunDetailProps) {
           </div>
         )}
 
-        {/* Failed approaches */}
+        {/* Tests run */}
         {data.runInfo && data.runInfo.testsRun.length > 0 && (
           <div>
             <p className="text-xs text-zinc-500 mb-1">Tests run</p>
             <ul className="text-xs font-mono space-y-0.5">
               {data.runInfo.testsRun.map((t, i) => (
                 <li key={i} className="flex gap-2">
-                  <span className={t.result === "pass" ? "text-emerald-500" : "text-red-500"}>
+                  <span className={t.result === "pass" ? "text-green-500" : "text-red-500"}>
                     {t.result}
                   </span>
                   <span className="text-zinc-500 truncate">{t.cmd}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Failed approaches */}
+        {data.runInfo?.failedApproaches && data.runInfo.failedApproaches.length > 0 && (
+          <div>
+            <p className="text-xs text-zinc-500 mb-1">Failed approaches</p>
+            <ul className="text-xs font-mono space-y-1">
+              {data.runInfo.failedApproaches.map((a, i) => (
+                <li key={i}>
+                  <span className="text-zinc-400">{a.what}</span>
+                  <span className="text-zinc-600"> — {a.whyItFailed}</span>
                 </li>
               ))}
             </ul>

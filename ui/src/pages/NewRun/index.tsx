@@ -292,6 +292,17 @@ export function NewRun({ onRunStarted }: NewRunProps) {
 
             {findResults && (
               <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs text-zinc-500">
+                    {findResults.length} result{findResults.length !== 1 ? "s" : ""}
+                  </p>
+                  <button
+                    onClick={() => setFindResults(null)}
+                    className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                  >
+                    Search again
+                  </button>
+                </div>
                 {findResults.length === 0 ? (
                   <p className="text-sm text-zinc-500 py-4 text-center">
                     No issues found. Try a different query.

@@ -22,8 +22,8 @@ export function StepCard({ event }: StepCardProps) {
   }
   if (event.type === "run.completed") {
     return (
-      <div className="flex items-center gap-2 text-xs text-emerald-400 font-mono">
-        <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+      <div className="flex items-center gap-2 text-xs text-green-400 font-mono">
+        <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
         Completed — {event.result.steps} steps, ${event.result.costUsd.toFixed(4)}
       </div>
     );

@@ -10,6 +10,7 @@ interface SidebarProps {
   selectedRunId: string | null;
   onSelectRun: (id: string) => void;
   onNewRun: () => void;
+  onModels: () => void;
 }
 
 function formatCost(usd: number): string {
@@ -21,7 +22,19 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export function Sidebar({ runs, liveRuns, selectedRunId, onSelectRun, onNewRun }: SidebarProps) {
+function formatElapsed(ms: number): string {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  return `${Math.floor(ms / 60_000)}m`;
+}
+
+export function Sidebar({
+  runs,
+  liveRuns,
+  selectedRunId,
+  onSelectRun,
+  onNewRun,
+  onModels,
+}: SidebarProps) {
   // Merge live runs with historical runs, deduplicating by runId
   const liveIds = new Set(liveRuns.map((r) => r.runId));
   const historical = runs.filter((r) => !liveIds.has(r.runId));
@@ -37,14 +50,22 @@ export function Sidebar({ runs, liveRuns, selectedRunId, onSelectRun, onNewRun }
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
         <span className="text-sm font-semibold text-zinc-100 tracking-tight">iaso</span>
-        <button
-          onClick={onNewRun}
-          className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-100 transition-colors px-2 py-1 rounded hover:bg-zinc-800"
-          title="New run (N)"
-        >
-          <Plus size={13} />
-          New run
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onModels}
+            className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors px-2 py-1 rounded hover:bg-zinc-800"
+          >
+            Models
+          </button>
+          <button
+            onClick={onNewRun}
+            className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-100 transition-colors px-2 py-1 rounded hover:bg-zinc-800"
+            title="New run (N)"
+          >
+            <Plus size={13} />
+            New run
+          </button>
+        </div>
       </div>
 
       {/* Run list */}
@@ -73,6 +94,7 @@ export function Sidebar({ runs, liveRuns, selectedRunId, onSelectRun, onNewRun }
               const steps = item.kind === "live" ? item.run.steps : item.run.steps;
               const costUsd = item.kind === "live" ? item.run.costUsd : item.run.costUsd;
               const startedAt = item.kind === "live" ? item.run.startedAt : item.run.startedAt;
+              const elapsedMs = item.kind === "live" ? item.run.elapsedMs : item.run.elapsedMs;
 
               return (
                 <li key={id}>
@@ -90,9 +112,10 @@ export function Sidebar({ runs, liveRuns, selectedRunId, onSelectRun, onNewRun }
                     </div>
                     <p className="text-xs text-zinc-200 truncate leading-tight mb-1">{title}</p>
                     <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
-                      <span className="truncate max-w-[80px]">{model.split(":")[1] ?? model}</span>
-                      <span>{steps} steps</span>
+                      <span className="truncate max-w-[70px]">{model.split(":")[1] ?? model}</span>
+                      <span>{steps}st</span>
                       <span>{formatCost(costUsd)}</span>
+                      <span>{formatElapsed(elapsedMs)}</span>
                     </div>
                   </button>
                 </li>

@@ -107,7 +107,7 @@ export function DiffView({ diff }: DiffViewProps) {
               >
                 {file.header}
               </button>
-              <span className="text-xs font-mono text-emerald-500">+{addCount}</span>
+              <span className="text-xs font-mono text-green-500">+{addCount}</span>
               <span className="text-xs font-mono text-red-500">-{delCount}</span>
             </div>
 

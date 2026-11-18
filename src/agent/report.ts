@@ -74,6 +74,7 @@ export const runInfoSchema = z.object({
   testsAdded: z.array(z.string()),
   confidence: z.enum(["low", "medium", "high"]).optional(),
   testsRun: z.array(z.object({ cmd: z.string(), result: z.string(), step: z.number() })),
+  failedApproaches: z.array(z.object({ what: z.string(), whyItFailed: z.string() })).optional(),
   patchBytes: z.number(),
   /** Absent in runs made before step 13A. */
   verification: verificationSchema.optional(),
@@ -111,6 +112,9 @@ export function runInfoOf(input: ReportInput): RunInfo {
     assumptions: sub?.assumptions ?? [],
     testsAdded: sub?.testsAdded ?? [],
     testsRun: input.result.fix?.state.testsRun ?? [],
+    ...(input.result.fix?.state.failedApproaches?.length
+      ? { failedApproaches: input.result.fix.state.failedApproaches }
+      : {}),
     patchBytes: Buffer.byteLength(input.result.diff),
     ...(input.verification === undefined ? {} : { verification: input.verification }),
     ...(input.network === undefined ? {} : { network: input.network }),

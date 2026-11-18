@@ -98,6 +98,7 @@ export interface RunInfo {
   testsAdded: string[];
   confidence?: "low" | "medium" | "high";
   testsRun: { cmd: string; result: string; step: number }[];
+  failedApproaches?: { what: string; whyItFailed: string }[];
   verification?: {
     status: string;
     reproduction: { status: string; tail: string };

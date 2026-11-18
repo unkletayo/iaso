@@ -1,8 +1,30 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { X } from "lucide-react";
-import type { LiveRun, ServeControl } from "../../types";
+import type { LiveRun, ServeControl, ServeEvent } from "../../types";
 import { StepCard } from "./StepCard";
 import { ApprovalBanner } from "./ApprovalBanner";
+
+function mergeTextEvents(events: ServeEvent[]): ServeEvent[] {
+  const result: ServeEvent[] = [];
+  for (const event of events) {
+    if (event.type === "message.part" && event.part.kind === "text") {
+      const last = result[result.length - 1];
+      if (
+        last?.type === "message.part" &&
+        last.part.kind === "text" &&
+        last.part.step === event.part.step
+      ) {
+        result[result.length - 1] = {
+          ...last,
+          part: { ...last.part, delta: last.part.delta + event.part.delta },
+        };
+        continue;
+      }
+    }
+    result.push(event);
+  }
+  return result;
+}
 
 interface LiveFeedProps {
   run: LiveRun;
@@ -109,7 +131,7 @@ export function LiveFeed({ run, onControl }: LiveFeedProps) {
           </div>
         )}
 
-        {run.events.map((event, i) => (
+        {mergeTextEvents(run.events).map((event, i) => (
           <StepCard key={i} event={event} />
         ))}
 
