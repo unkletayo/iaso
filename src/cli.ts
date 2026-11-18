@@ -8,6 +8,7 @@ import { registerModels } from "./commands/models.js";
 import { registerPr } from "./commands/pr.js";
 import { registerReplay } from "./commands/replay.js";
 import { registerRun } from "./commands/run.js";
+import { registerServe } from "./commands/serve.js";
 
 export const VERSION = "0.0.1";
 
@@ -18,6 +19,7 @@ export function buildProgram(): Command {
     .version(VERSION);
 
   registerRun(program);
+  registerServe(program);
   registerReplay(program);
   registerBench(program);
   registerPr(program);

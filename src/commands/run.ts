@@ -148,7 +148,7 @@ export function defaultDeps(): CommandDeps {
 export const newRunId = (now: Date = new Date()): string =>
   `${now.toISOString().replace(/[-:]/g, "").slice(0, 15)}-${randomBytes(2).toString("hex")}`;
 
-function setupFor(id: string, deps: CommandDeps, effort?: Effort): PhaseSetup {
+export function setupFor(id: string, deps: CommandDeps, effort?: Effort): PhaseSetup {
   const entry = findModel(loadCatalogue(), id);
   if (effort !== undefined && !entry.effort) {
     deps.log(`${id} takes no reasoning-effort setting; --effort ${effort} is ignored for it`);

@@ -558,6 +558,7 @@ async function runStep(l: Loop, step: number): Promise<StepOutcome> {
     nudges.push(loopNudge(repeat.description));
   }
   l.history.push(resultsMessage(done, nudges));
+  if (l.opts.cancel?.()) return { done: true, status: "cancelled" };
   return { done: false };
 }
 
