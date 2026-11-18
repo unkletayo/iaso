@@ -289,7 +289,7 @@ export async function createWebServer(opts: WebServerOptions) {
       activeRuns.delete(runId);
     });
 
-    return { runId, status: "created" };
+    return { runId, status: "created", model };
   });
 
   // ── GET /api/models ───────────────────────────────────────────────────────

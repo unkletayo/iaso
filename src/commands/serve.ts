@@ -260,11 +260,15 @@ async function serveWithSource(
 
     const seenFirstStep = { value: false };
     let pipelineResult: PipelineResult | undefined;
+    const serveEvents: ServeEvent[] = [];
 
     const startPromise = session.start();
     for await (const event of session.events) {
       const serveEvent = translateEvent(runId, event, seenFirstStep);
-      if (serveEvent) emit(stdout, serveEvent);
+      if (serveEvent) {
+        emit(stdout, serveEvent);
+        serveEvents.push(serveEvent);
+      }
       if (event.kind === "finished") pipelineResult = event.result;
     }
     await startPromise;
@@ -284,6 +288,11 @@ async function serveWithSource(
         elapsedMs: Date.now() - started,
         result: pipelineResult,
       });
+      await writeFile(
+        join(runDir, "trajectory.jsonl"),
+        serveEvents.map((e) => JSON.stringify(e)).join("\n") + "\n",
+        "utf8",
+      );
       deps.log(
         `${pipelineResult.status}: ${String(pipelineResult.steps)} steps, $${pipelineResult.costUsd.toFixed(4)}. Report: ${join(runDir, "report.md")}`,
       );

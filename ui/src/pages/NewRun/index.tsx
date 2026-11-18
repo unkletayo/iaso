@@ -6,7 +6,7 @@ import { Search, GitBranch, FileText, ChevronDown, ChevronUp, Loader2 } from "lu
 type SourceKind = "github" | "local" | "find";
 
 interface NewRunProps {
-  onRunStarted: (runId: string) => void;
+  onRunStarted: (runId: string, model: string) => void;
 }
 
 export function NewRun({ onRunStarted }: NewRunProps) {
@@ -96,7 +96,7 @@ export function NewRun({ onRunStarted }: NewRunProps) {
         req.github = selectedIssue.url;
       }
       const res = await api.runs.start(req);
-      onRunStarted(res.runId);
+      onRunStarted(res.runId, res.model);
     } catch (err) {
       setStartError(err instanceof Error ? err.message : "Failed to start run");
     } finally {

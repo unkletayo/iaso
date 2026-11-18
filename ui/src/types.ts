@@ -152,6 +152,7 @@ export interface StartRunRequest {
 export interface StartRunResponse {
   runId: string;
   status: "created";
+  model: string;
 }
 
 // Active run state tracked by the UI
